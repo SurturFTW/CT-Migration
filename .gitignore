@@ -1,0 +1,12 @@
+Backend.zip
+Frontend.zip
+
+Backend/node_modules
+Frontend/node_modules
+
+Backend/OldBackup
+Frontend/OldBackup
+
+Backend/package-lock.json
+Frontend/package-lock.json
+.DS_Store
