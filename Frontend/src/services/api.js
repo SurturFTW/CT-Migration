@@ -11,9 +11,11 @@ const api = axios.create({
 });
 
 // JSON Converter API calls
+// JSON Converter API calls
 export const convertJsonToCsv = async (formData) => {
   try {
-    const response = await api.post("/json_converter", formData, {
+    // Changed from "/json_converter" to "/convert"
+    const response = await api.post("/convert", formData, {
       headers: {
         "Content-Type": "multipart/form-data",
       },

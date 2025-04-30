@@ -131,7 +131,7 @@ router.post("/generate_manifest", async (req, res) => {
 
       // Wait for ZIP creation to complete before responding
       output.on("close", () => {
-        // console.log(`ZIP file created successfully: ${zipPath}`);
+        console.log(`ZIP file created successfully: ${zipPath}`);
         res.json({
           // Updated manifest URL path
           manifest_url: `/api/download/${folderName}/${manifestFileName}`,

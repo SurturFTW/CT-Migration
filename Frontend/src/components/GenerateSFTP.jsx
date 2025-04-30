@@ -394,41 +394,60 @@ function SftpGenerator() {
   };
 
   // Function to download files
-  const downloadFile = (url, fileName) => {
+  const downloadFile = (url, type) => {
     try {
-      // API_URL base for relative URLs
       const baseUrl = process.env.REACT_APP_API_URL || "http://localhost:5000";
-
-      // Format the URL properly based on what the server expects
       let downloadUrl;
-
+      let fileName;
+      const timestamp = new Date().getTime();
+  
+      // Format the URL properly based on what the server expects
       if (url.startsWith("http")) {
-        // Full URL, use as is
         downloadUrl = url;
       } else if (url.startsWith("/")) {
-        // Path starting with slash, append to base URL
         downloadUrl = `${baseUrl}${url}`;
       } else {
-        // Otherwise assume it's a filename for the download endpoint
         downloadUrl = `${baseUrl}/api/download/${url}`;
       }
-
+  
+      // Set appropriate filename based on type and include timestamp
+      switch (type) {
+        case 'manifest':
+          fileName = `${accountName}_manifest_${timestamp}.json`;
+          break;
+        case 'csv':
+          fileName = `${accountName}_data_${timestamp}.csv`;
+          break;
+        case 'zip':
+          fileName = `${accountName}_${dataType}_${timestamp}.zip`;
+          break;
+        case 'validation_log':
+          fileName = `validation_log_${timestamp}.csv`;
+          break;
+        case 'valid_entries':
+          fileName = `valid_entries_${timestamp}.csv`;
+          break;
+        default:
+          fileName = url.split('/').pop();
+      }
+  
       console.log("Downloading file from:", downloadUrl);
-
+  
       // Create a link element and trigger the download
       const link = document.createElement("a");
       link.href = downloadUrl;
-      link.download = fileName;
+      link.setAttribute('download', fileName);
+      link.setAttribute('target', '_blank');
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
     } catch (error) {
       console.error("Download error:", error);
-      setErrorMessage(`Failed to download ${fileName}`);
+      setErrorMessage(`Failed to download ${type} file`);
     }
   };
-
-  // Reset the form to start over
+  
+  // Reset the form to start over with all state resets
   const handleReset = () => {
     setFile(null);
     setSelectedFileName("");
@@ -439,26 +458,37 @@ function SftpGenerator() {
     setValidationResults(null);
     setErrorMessage("");
     setCurrentStep(1);
+    setColumnMappings([]);
+    setDataType("profile");
+    setGeneratedFiles([]);
+    setDownloadLinks({
+      manifest: "",
+      csv: "",
+      zip: "",
+    });
+    setFilePath("");
+    setTotalRows(0);
+    setUploadProgress(0);
+    setIsUploading(false);
+    setProcessingStep("");
   };
-
-  // Render files step
+  
+  // Update the renderFilesStep function with the new download handlers
   const renderFilesStep = () => {
-    // Create links from the generatedFiles array if it exists
     const links = generatedFiles?.length
       ? {
           zip: generatedFiles.find((f) => f.type === "zip")?.url || "",
-          manifest:
-            generatedFiles.find((f) => f.type === "manifest")?.url || "",
+          manifest: generatedFiles.find((f) => f.type === "manifest")?.url || "",
           csv: generatedFiles.find((f) => f.type === "csv")?.url || "",
         }
       : downloadLinks;
-
+  
     return (
       <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
         <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
           <i className="fas fa-file-export text-black mr-3"></i>Files Generated
         </h2>
-
+  
         <div className="mb-8 p-4 bg-green-50 text-green-800 rounded-lg border border-green-200">
           <div className="flex">
             <i className="fas fa-check-circle mr-2 text-xl"></i>
@@ -467,7 +497,7 @@ function SftpGenerator() {
             </span>
           </div>
         </div>
-
+  
         <div className="p-6 rounded-lg border border-gray-300 mb-6">
           <h3 className="text-lg font-medium text-gray-700 mb-4">
             Download Options
@@ -486,9 +516,7 @@ function SftpGenerator() {
                     </div>
                   </div>
                   <button
-                    onClick={() =>
-                      downloadFile(links.zip, `${accountName}_${dataType}.zip`)
-                    }
+                    onClick={() => downloadFile(links.zip, 'zip')}
                     className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
                   >
                     <i className="fas fa-download mr-2"></i>Download ZIP
@@ -496,7 +524,7 @@ function SftpGenerator() {
                 </div>
               </div>
             )}
-
+  
             {links.manifest && (
               <div className="p-4 border border-gray-200 rounded-md bg-white">
                 <div className="flex justify-between items-center">
@@ -510,12 +538,7 @@ function SftpGenerator() {
                     </div>
                   </div>
                   <button
-                    onClick={() =>
-                      downloadFile(
-                        links.manifest,
-                        `${accountName}_manifest.json`
-                      )
-                    }
+                    onClick={() => downloadFile(links.manifest, 'manifest')}
                     className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
                   >
                     <i className="fas fa-download mr-2"></i>Download JSON
@@ -523,7 +546,7 @@ function SftpGenerator() {
                 </div>
               </div>
             )}
-
+  
             {links.csv && (
               <div className="p-4 border border-gray-200 rounded-md bg-white">
                 <div className="flex justify-between items-center">
@@ -537,9 +560,7 @@ function SftpGenerator() {
                     </div>
                   </div>
                   <button
-                    onClick={() =>
-                      downloadFile(links.csv, `${accountName}_data.csv`)
-                    }
+                    onClick={() => downloadFile(links.csv, 'csv')}
                     className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
                   >
                     <i className="fas fa-download mr-2"></i>Download CSV
@@ -549,10 +570,13 @@ function SftpGenerator() {
             )}
           </div>
         </div>
-
+  
         <div className="mt-8 flex justify-between">
           <button
-            onClick={handleReset}
+            onClick={() => {
+              handleReset();
+              setCurrentStep(1);
+            }}
             className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
           >
             <i className="fas fa-redo mr-2"></i>Start Over

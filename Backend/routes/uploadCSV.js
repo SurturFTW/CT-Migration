@@ -278,9 +278,9 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
           logCsvStream.end();
           validCsvStream.end();
 
-          /* console.log(
+          console.log(
             `Validation complete: ${totalRows} total rows, ${totalInvalidEntries} invalid rows`
-          ); */
+          );
           resolve();
         })
         .on("error", (error) => {

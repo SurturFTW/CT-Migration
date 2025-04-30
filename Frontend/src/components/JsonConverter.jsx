@@ -1,15 +1,14 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { convertJsonToCsv } from "../services/api";
 
 import Header from "./Header";
 import Footer from "./Footer";
-
-import { convertJsonToCsv } from "../services/api";
+import FileUploader from "./FileUploader"; // Import the new component
 
 function JsonConverter() {
   const navigate = useNavigate();
   const [file, setFile] = useState(null);
-  const [selectedFileName, setSelectedFileName] = useState("");
   const [convertDisabled, setConvertDisabled] = useState(true);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("");
@@ -19,9 +18,9 @@ function JsonConverter() {
   const [downloadFilename, setDownloadFilename] = useState("");
   const [errorMessage, setErrorMessage] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
+  const [clientId] = useState(`client_${Date.now()}`); // Unique client ID for SSE
 
-  const fileInputRef = useRef(null);
-  const dropZoneRef = useRef(null);
+  const eventSourceRef = useRef(null);
 
   const headerRightContent = (
     <div className="flex items-center space-x-4">
@@ -33,27 +32,6 @@ function JsonConverter() {
       </button>
     </div>
   );
-
-  // Handle selected files - wrap with useCallback to memoize the function
-  const handleFiles = useCallback((e) => {
-    const files = e.target.files;
-    if (files.length > 0) {
-      const file = files[0];
-      if (file.type === "application/json" || file.name.endsWith(".json")) {
-        setFile(file);
-        setSelectedFileName(file.name);
-        setConvertDisabled(false);
-      } else {
-        setFile(null);
-        setSelectedFileName("Please select a JSON file");
-        setConvertDisabled(true);
-        setErrorMessage("Please select a valid JSON file");
-        setTimeout(() => {
-          setErrorMessage(null);
-        }, 8000);
-      }
-    }
-  }, []); // No dependencies since it doesn't use any state that changes
 
   // Display error message
   const showError = useCallback((message) => {
@@ -71,143 +49,21 @@ function JsonConverter() {
     }, 5000);
   }, []);
 
-  // Handle drag and drop functionality
+  // Handle file selection from the FileUploader component
+  const handleFileSelect = useCallback((selectedFile) => {
+    setFile(selectedFile);
+    setConvertDisabled(!selectedFile);
+  }, []);
+
+  // Connect to SSE for progress updates
   useEffect(() => {
-    const dropZone = dropZoneRef.current;
-
-    const preventDefaults = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    };
-
-    const highlight = () => {
-      dropZone.classList.add("border-gray-400");
-    };
-
-    const unhighlight = () => {
-      dropZone.classList.remove("border-gray-400");
-    };
-
-    const handleDrop = (e) => {
-      const dt = e.dataTransfer;
-      const files = dt.files;
-      handleFiles({ target: { files } });
-    };
-
-    // Prevent default drag behaviors
-    ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
-      dropZone.addEventListener(eventName, preventDefaults, false);
-      document.body.addEventListener(eventName, preventDefaults, false);
-    });
-
-    // Highlight drop zone when item is dragged over it
-    ["dragenter", "dragover"].forEach((eventName) => {
-      dropZone.addEventListener(eventName, highlight, false);
-    });
-
-    ["dragleave", "drop"].forEach((eventName) => {
-      dropZone.addEventListener(eventName, unhighlight, false);
-    });
-
-    // Handle dropped files
-    dropZone.addEventListener("drop", handleDrop, false);
-
+    // Clean up event source on unmount
     return () => {
-      // Clean up event listeners
-      ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
-        dropZone.removeEventListener(eventName, preventDefaults, false);
-        document.body.removeEventListener(eventName, preventDefaults, false);
-      });
-
-      ["dragenter", "dragover"].forEach((eventName) => {
-        dropZone.removeEventListener(eventName, highlight, false);
-      });
-
-      ["dragleave", "drop"].forEach((eventName) => {
-        dropZone.removeEventListener(eventName, unhighlight, false);
-      });
-
-      dropZone.removeEventListener("drop", handleDrop, false);
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
     };
-  }, [handleFiles]); // Add handleFiles to dependency array
-
-  // Convert JSON to CSV
-  const convertJsonToCsv = async (jsonData) => {
-    try {
-      // Parse the JSON data
-      const parsedData = JSON.parse(jsonData);
-
-      let dataArray = [];
-
-      // Handle different JSON structures
-      if (Array.isArray(parsedData)) {
-        // Direct array of objects
-        dataArray = parsedData;
-      } else if (typeof parsedData === "object") {
-        // Find first array in the object
-        for (const key in parsedData) {
-          if (Array.isArray(parsedData[key])) {
-            dataArray = parsedData[key];
-            break;
-          }
-        }
-
-        // If no array found, treat the object as a single item
-        if (dataArray.length === 0) {
-          dataArray = [parsedData];
-        }
-      } else {
-        throw new Error("Unsupported JSON structure");
-      }
-
-      if (dataArray.length === 0) {
-        throw new Error("No valid data found in JSON");
-      }
-
-      // Extract headers from the first object
-      const headers = Object.keys(dataArray[0]);
-
-      // Create CSV header row
-      let csv = headers.join(",") + "\n";
-
-      // Function to process object value for CSV
-      const processValue = (value) => {
-        if (value === null || value === undefined) {
-          return "";
-        } else if (typeof value === "object") {
-          return `"${JSON.stringify(value).replace(/"/g, '""')}"`;
-        } else if (typeof value === "string") {
-          return `"${value.replace(/"/g, '""')}"`;
-        } else {
-          return value;
-        }
-      };
-
-      // Process each data row
-      for (let i = 0; i < dataArray.length; i++) {
-        const row = dataArray[i];
-        const values = headers.map((header) => processValue(row[header]));
-        csv += values.join(",") + "\n";
-
-        // Update progress periodically
-        if (i % Math.max(1, Math.floor(dataArray.length / 100)) === 0) {
-          const progressPercent = Math.min(
-            99,
-            Math.round((i / dataArray.length) * 100)
-          );
-          setProgress(progressPercent);
-          setStatus(`Processing row ${i + 1} of ${dataArray.length}...`);
-          // Allow UI to update
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-      }
-
-      return csv;
-    } catch (error) {
-      console.error("Error converting JSON to CSV:", error);
-      throw error;
-    }
-  };
+  }, []);
 
   // Handle JSON file conversion
   const handleJsonConversion = async () => {
@@ -230,27 +86,25 @@ function JsonConverter() {
       const formData = new FormData();
       formData.append("jsonFile", file);
 
-      // Send to server
       setStatus("Uploading file...");
       setProgress(20);
 
+      // Use your existing API service
       const response = await convertJsonToCsv(formData);
 
-      setProgress(80);
-      setStatus("Processing complete!");
+      setProgress(100);
+      setStatus("Conversion completed!");
 
       // Handle the response
       if (response.success) {
         // Create download URL for the converted file
-        const downloadUrl = `${process.env.REACT_APP_API_URL.replace(
-          "/api",
-          ""
-        )}/downloads/${response.filename}`;
+        const apiUrl =
+          process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+        const downloadUrl = `${apiUrl.replace("/api", "")}/downloads/${
+          response.filename
+        }`;
         setDownloadUrl(downloadUrl);
         setDownloadFilename(response.filename);
-
-        setProgress(100);
-        setStatus("Conversion completed!");
 
         // Show success
         setShowResult(true);
@@ -269,16 +123,11 @@ function JsonConverter() {
   // Clear file selection and reset state
   const handleClearFile = () => {
     setFile(null);
-    setSelectedFileName("");
     setConvertDisabled(true);
     setShowProgress(false);
     setShowResult(false);
     setDownloadUrl("");
     setDownloadFilename("");
-    // Reset the file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
   };
 
   // Handle file download cleanup
@@ -327,49 +176,15 @@ function JsonConverter() {
           )}
 
           <div className="space-y-6">
-            <div
-              ref={dropZoneRef}
-              className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-gray-400 transition-colors"
-            >
-              <input
-                type="file"
-                id="jsonFile"
-                ref={fileInputRef}
-                accept=".json"
-                className="hidden"
-                onChange={handleFiles}
-              />
-              <label htmlFor="jsonFile" className="cursor-pointer">
-                <i className="fas fa-cloud-upload-alt text-5xl text-gray-400 mb-4 block"></i>
-                <span className="text-gray-600 font-medium">
-                  Drag and drop your JSON file here, or
-                </span>
-                <span className="block mt-2 text-gray-800 font-semibold">
-                  Browse Files
-                </span>
-                {selectedFileName && (
-                  <div className="mt-3">
-                    <span className="text-sm text-gray-500">
-                      Selected file: {selectedFileName}
-                    </span>
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        handleClearFile();
-                      }}
-                      className="ml-2 text-sm text-red-500 hover:text-red-700"
-                      title="Remove file"
-                    >
-                      <i className="fas fa-times-circle"></i>
-                    </button>
-                  </div>
-                )}
-                <div className="mt-6 text-gray-500 text-sm">
-                  <p>Maximum file size: 2GB</p>
-                  <p>Supported format: JSON only</p>
-                </div>
-              </label>
-            </div>
+            {/* Replace the old file upload with our new component */}
+            <FileUploader
+              accept=".json,application/json"
+              maxSize={2048}
+              onFileSelect={handleFileSelect}
+              onError={showError}
+              supportedFormats="JSON only"
+              disabled={showProgress}
+            />
 
             <button
               onClick={handleJsonConversion}
