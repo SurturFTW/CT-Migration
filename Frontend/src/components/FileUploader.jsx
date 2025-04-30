@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 
 function FileUploader({
   accept = "*/*",
-  maxSize = 2048, // in MB
+  maxSize = 5, // in GB
   onFileSelect,
   onError,
   supportedFormats = "All files",
@@ -23,10 +23,11 @@ function FileUploader({
       if (files && files.length > 0) {
         const file = files[0];
 
-        // Check file size (convert maxSize from MB to bytes)
-        if (file.size > maxSize * 1024 * 1024) {
+        // Check file size (convert maxSize from GB to bytes)
+        const maxSizeInBytes = maxSize * 1024 * 1024 * 1024; // Convert GB to bytes
+        if (file.size > maxSizeInBytes) {
           if (onError) {
-            onError(`File is too large. Maximum size is ${maxSize}MB.`);
+            onError(`File is too large. Maximum size is ${maxSize}GB.`);
           }
           return;
         }
@@ -197,7 +198,7 @@ function FileUploader({
           </div>
         )}
         <div className="mt-6 text-gray-500 text-sm">
-          <p>Maximum file size: {maxSize}MB</p>
+          <p>Maximum file size: {maxSize} GB</p>
           <p>Supported format: {supportedFormats}</p>
         </div>
       </label>

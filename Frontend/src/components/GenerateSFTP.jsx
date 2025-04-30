@@ -5,6 +5,7 @@ import { uploadCSV, validateCSVData, generateFiles } from "../services/api";
 import Header from "./Header";
 import Footer from "./Footer";
 import ColumnMapping from "./ColumnMapping";
+import FileUploader from "./FileUploader";
 
 function SftpGenerator() {
   const navigate = useNavigate();
@@ -54,29 +55,6 @@ function SftpGenerator() {
       </button>
     </div>
   );
-
-  // Handle file selection
-  const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0];
-    if (selectedFile && selectedFile.name.endsWith(".csv")) {
-      setFile(selectedFile);
-      setSelectedFileName(selectedFile.name);
-
-      // Display file size information
-      const fileSizeMB = (selectedFile.size / (1024 * 1024)).toFixed(2);
-      console.log(`Selected file size: ${fileSizeMB} MB`);
-
-      if (selectedFile.size > 5 * 1024 * 1024 * 1024) {
-        displayError("File size exceeds the 5GB limit.");
-        setFile(null);
-        setSelectedFileName("");
-      }
-    } else {
-      setFile(null);
-      setSelectedFileName("");
-      displayError("Please select a CSV file.");
-    }
-  };
 
   // Function to display error messages with auto-hide
   const displayError = (message) => {
@@ -289,38 +267,6 @@ function SftpGenerator() {
     }
   };
 
-  const renderLoadingState = () => {
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
-          <div className="flex flex-col items-center space-y-4">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-black"></div>
-            <div className="text-center">
-              <p className="text-gray-700 font-medium">{processingStep}</p>
-              {isUploading && (
-                <div className="mt-4 w-full">
-                  <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-black"
-                      style={{ width: `${uploadProgress}%` }}
-                    ></div>
-                  </div>
-                  <p className="text-sm text-gray-500 mt-1">
-                    {uploadProgress}% complete
-                  </p>
-                </div>
-              )}
-              <p className="text-gray-500 text-sm mt-2">
-                Large files may take several minutes. Please don't close this
-                window.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   // Generate SFTP files
   const handleGenerateFiles = async () => {
     try {
@@ -400,7 +346,7 @@ function SftpGenerator() {
       let downloadUrl;
       let fileName;
       const timestamp = new Date().getTime();
-  
+
       // Format the URL properly based on what the server expects
       if (url.startsWith("http")) {
         downloadUrl = url;
@@ -409,35 +355,35 @@ function SftpGenerator() {
       } else {
         downloadUrl = `${baseUrl}/api/download/${url}`;
       }
-  
+
       // Set appropriate filename based on type and include timestamp
       switch (type) {
-        case 'manifest':
+        case "manifest":
           fileName = `${accountName}_manifest_${timestamp}.json`;
           break;
-        case 'csv':
+        case "csv":
           fileName = `${accountName}_data_${timestamp}.csv`;
           break;
-        case 'zip':
+        case "zip":
           fileName = `${accountName}_${dataType}_${timestamp}.zip`;
           break;
-        case 'validation_log':
+        case "validation_log":
           fileName = `validation_log_${timestamp}.csv`;
           break;
-        case 'valid_entries':
+        case "valid_entries":
           fileName = `valid_entries_${timestamp}.csv`;
           break;
         default:
-          fileName = url.split('/').pop();
+          fileName = url.split("/").pop();
       }
-  
+
       console.log("Downloading file from:", downloadUrl);
-  
+
       // Create a link element and trigger the download
       const link = document.createElement("a");
       link.href = downloadUrl;
-      link.setAttribute('download', fileName);
-      link.setAttribute('target', '_blank');
+      link.setAttribute("download", fileName);
+      link.setAttribute("target", "_blank");
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -446,7 +392,7 @@ function SftpGenerator() {
       setErrorMessage(`Failed to download ${type} file`);
     }
   };
-  
+
   // Reset the form to start over with all state resets
   const handleReset = () => {
     setFile(null);
@@ -472,23 +418,24 @@ function SftpGenerator() {
     setIsUploading(false);
     setProcessingStep("");
   };
-  
+
   // Update the renderFilesStep function with the new download handlers
   const renderFilesStep = () => {
     const links = generatedFiles?.length
       ? {
           zip: generatedFiles.find((f) => f.type === "zip")?.url || "",
-          manifest: generatedFiles.find((f) => f.type === "manifest")?.url || "",
+          manifest:
+            generatedFiles.find((f) => f.type === "manifest")?.url || "",
           csv: generatedFiles.find((f) => f.type === "csv")?.url || "",
         }
       : downloadLinks;
-  
+
     return (
       <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
         <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
           <i className="fas fa-file-export text-black mr-3"></i>Files Generated
         </h2>
-  
+
         <div className="mb-8 p-4 bg-green-50 text-green-800 rounded-lg border border-green-200">
           <div className="flex">
             <i className="fas fa-check-circle mr-2 text-xl"></i>
@@ -497,7 +444,7 @@ function SftpGenerator() {
             </span>
           </div>
         </div>
-  
+
         <div className="p-6 rounded-lg border border-gray-300 mb-6">
           <h3 className="text-lg font-medium text-gray-700 mb-4">
             Download Options
@@ -516,7 +463,7 @@ function SftpGenerator() {
                     </div>
                   </div>
                   <button
-                    onClick={() => downloadFile(links.zip, 'zip')}
+                    onClick={() => downloadFile(links.zip, "zip")}
                     className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
                   >
                     <i className="fas fa-download mr-2"></i>Download ZIP
@@ -524,7 +471,7 @@ function SftpGenerator() {
                 </div>
               </div>
             )}
-  
+
             {links.manifest && (
               <div className="p-4 border border-gray-200 rounded-md bg-white">
                 <div className="flex justify-between items-center">
@@ -538,7 +485,7 @@ function SftpGenerator() {
                     </div>
                   </div>
                   <button
-                    onClick={() => downloadFile(links.manifest, 'manifest')}
+                    onClick={() => downloadFile(links.manifest, "manifest")}
                     className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
                   >
                     <i className="fas fa-download mr-2"></i>Download JSON
@@ -546,7 +493,7 @@ function SftpGenerator() {
                 </div>
               </div>
             )}
-  
+
             {links.csv && (
               <div className="p-4 border border-gray-200 rounded-md bg-white">
                 <div className="flex justify-between items-center">
@@ -560,7 +507,7 @@ function SftpGenerator() {
                     </div>
                   </div>
                   <button
-                    onClick={() => downloadFile(links.csv, 'csv')}
+                    onClick={() => downloadFile(links.csv, "csv")}
                     className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
                   >
                     <i className="fas fa-download mr-2"></i>Download CSV
@@ -570,7 +517,7 @@ function SftpGenerator() {
             )}
           </div>
         </div>
-  
+
         <div className="mt-8 flex justify-between">
           <button
             onClick={() => {
@@ -913,42 +860,23 @@ function SftpGenerator() {
             </h2>
 
             <form onSubmit={handleSubmit}>
-              <div
-                ref={dropZoneRef}
-                className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-gray-400 transition-colors"
-              >
-                <input
-                  type="file"
-                  id="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  className="hidden"
-                  accept=".csv"
-                  required
-                />
-                <label htmlFor="file" className="cursor-pointer">
-                  <i className="fas fa-cloud-upload-alt text-5xl text-gray-400 mb-4 block"></i>
-                  <span className="text-gray-600 font-medium">
-                    Drag and drop your CSV file here, or
-                  </span>
-                  <span className="block mt-2 text-black font-semibold">
-                    Browse Files
-                  </span>
-                  {selectedFileName && (
-                    <span className="block mt-3 text-sm text-gray-500">
-                      {selectedFileName}
-                    </span>
-                  )}
-                </label>
-                <div className="mt-6 text-gray-500 text-sm">
-                  <p>Maximum file size: 5GB</p>
-                  <p>Supported format: CSV only</p>
-                </div>
-              </div>
+              <FileUploader
+                accept=".csv,text/csv"
+                maxSize={5} // 5GB limit
+                onFileSelect={(selectedFile) => {
+                  setFile(selectedFile);
+                  setSelectedFileName(selectedFile ? selectedFile.name : "");
+                }}
+                onError={(message) => displayError(message)}
+                supportedFormats="CSV only"
+                showPreview={true}
+                disabled={loading}
+              />
 
               <button
                 type="submit"
                 className="w-full mt-6 bg-black text-white py-3 px-4 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium"
+                disabled={!file || loading}
               >
                 <i className="fas fa-upload mr-2"></i>Process CSV
               </button>

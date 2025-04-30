@@ -4,7 +4,7 @@ import { convertJsonToCsv } from "../services/api";
 
 import Header from "./Header";
 import Footer from "./Footer";
-import FileUploader from "./FileUploader"; // Import the new component
+import FileUploader from "./FileUploader";
 
 function JsonConverter() {
   const navigate = useNavigate();
@@ -179,7 +179,7 @@ function JsonConverter() {
             {/* Replace the old file upload with our new component */}
             <FileUploader
               accept=".json,application/json"
-              maxSize={2048}
+              maxSize={5}
               onFileSelect={handleFileSelect}
               onError={showError}
               supportedFormats="JSON only"

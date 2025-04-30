@@ -9,5 +9,8 @@ Frontend/node_modules
 
 Backend/package-lock.json
 Frontend/package-lock.json
-.DS_Store
 
+Backend/uploads
+Backend/output
+
+.DS_Store
