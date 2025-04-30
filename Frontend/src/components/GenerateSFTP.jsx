@@ -1,11 +1,20 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { uploadCSV, validateCSVData, generateFiles } from "../services/api";
+import {
+  uploadCSV,
+  validateCSVData,
+  generateFiles,
+  listS3Buckets,
+  listS3Files,
+  fetchFromS3,
+} from "../services/api";
+
 import Header from "./Header";
 import Footer from "./Footer";
 import ColumnMapping from "./ColumnMapping";
 import FileUploader from "./FileUploader";
+import Loading from "./Loading";
 
 function SftpGenerator() {
   const navigate = useNavigate();
@@ -18,7 +27,7 @@ function SftpGenerator() {
   const fileInputRef = useRef(null);
   const dropZoneRef = useRef(null);
 
-  const [data, setData] = useState([]);
+  const [, setData] = useState([]);
   const [filePath, setFilePath] = useState("");
   const [generatedFiles, setGeneratedFiles] = useState([]);
 
@@ -35,9 +44,22 @@ function SftpGenerator() {
   );
   const [accountName] = useState(localStorage.getItem("accountName"));
 
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [isUploading, setIsUploading] = useState(false);
-  const [processingStep, setProcessingStep] = useState("");
+  const [, setUploadProgress] = useState(0);
+  const [, setIsUploading] = useState(false);
+  const [, setProcessingStep] = useState("");
+
+  // Add new state for S3
+  const [activeTab, setActiveTab] = useState("local");
+  const [s3Config, setS3Config] = useState({
+    region: "",
+    accessKey: "",
+    secretKey: "",
+    bucket: "",
+    filePath: "",
+  });
+  const [buckets, setBuckets] = useState([]);
+  const [files, setFiles] = useState([]);
+  const [isS3Connected, setIsS3Connected] = useState(false);
 
   const [downloadLinks, setDownloadLinks] = useState({
     manifest: "",
@@ -66,8 +88,6 @@ function SftpGenerator() {
 
   // Handle form submission for file upload
   const handleSubmit = async (e) => {
-    e.preventDefault();
-
     if (!file) {
       setErrorMessage("Please select a CSV file");
       return;
@@ -118,6 +138,111 @@ function SftpGenerator() {
     } finally {
       setLoading(false);
       setProcessingStep("");
+    }
+  };
+
+  // Add S3 related functions
+  const handleS3Connect = async () => {
+    try {
+      setLoading(true);
+      setErrorMessage("");
+
+      if (!s3Config.region || !s3Config.accessKey || !s3Config.secretKey) {
+        throw new Error("Please provide all AWS credentials");
+      }
+
+      const response = await listS3Buckets({
+        region: s3Config.region,
+        accessKey: s3Config.accessKey,
+        secretKey: s3Config.secretKey,
+      });
+
+      if (response.success && response.buckets) {
+        setBuckets(
+          response.buckets.map((bucket) => ({
+            Name: bucket.name,
+            CreationDate: bucket.creationDate,
+          }))
+        );
+        setIsS3Connected(true);
+      } else {
+        throw new Error("Failed to fetch S3 buckets");
+      }
+    } catch (error) {
+      console.error("S3 Connection error:", error);
+      displayError(error.message || "Failed to connect to AWS");
+      setIsS3Connected(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBucketSelect = async (bucketName) => {
+    try {
+      setLoading(true);
+      setErrorMessage("");
+
+      const response = await listS3Files({
+        region: s3Config.region,
+        accessKey: s3Config.accessKey,
+        secretKey: s3Config.secretKey,
+        bucket: bucketName,
+      });
+
+      if (response.success) {
+        setFiles(
+          response.files.map((file) => ({
+            Key: file.key,
+            Size: file.size,
+            LastModified: file.lastModified,
+          }))
+        );
+        setS3Config((prev) => ({ ...prev, bucket: bucketName }));
+      } else {
+        throw new Error("Failed to list files");
+      }
+    } catch (error) {
+      displayError(error.message);
+      setFiles([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleS3FileSelect = async () => {
+    try {
+      setLoading(true);
+      setErrorMessage("");
+
+      if (!s3Config.filePath || !s3Config.bucket) {
+        throw new Error("Please select a file from the bucket");
+      }
+
+      if (!s3Config.filePath.toLowerCase().endsWith(".csv")) {
+        throw new Error("Please select a CSV file");
+      }
+
+      const response = await fetchFromS3({
+        region: s3Config.region,
+        accessKey: s3Config.accessKey,
+        secretKey: s3Config.secretKey,
+        bucket: s3Config.bucket,
+        filePath: s3Config.filePath,
+      });
+
+      if (response.success) {
+        setFile(response.filepath);
+        setHeaders(response.headers);
+        setSelectedFileName(response.filename);
+        setTotalRows(response.rowCount);
+        setCurrentStep(2);
+      } else {
+        throw new Error(response.error || "Failed to fetch file from S3");
+      }
+    } catch (error) {
+      displayError(error.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -213,15 +338,12 @@ function SftpGenerator() {
   // Continue to validation after identity mapping
   const handleContinueToValidation = async () => {
     if (!identityColumn) {
-      setErrorMessage("Identity column is required");
+      displayError("Identity column is required");
       return;
     }
 
     try {
       setLoading(true);
-      setIsUploading(true);
-      setProcessingStep("Validating data");
-      setUploadProgress(0);
 
       const formData = new FormData();
       formData.append("file", file);
@@ -229,20 +351,10 @@ function SftpGenerator() {
       formData.append("emailColumn", emailColumn || "");
       formData.append("phoneColumn", phoneColumn || "");
 
-      // Use the enhanced validateCSVData function with progress tracking
-      const response = await validateCSVData(formData, (progressEvent) => {
-        const percentCompleted = Math.round(
-          (progressEvent.loaded * 100) / progressEvent.total
-        );
-        setUploadProgress(percentCompleted);
-      });
-
-      setIsUploading(false);
+      const response = await validateCSVData(formData);
 
       if (response.success) {
         setValidationResults(response.results);
-
-        // Create initial column mappings from headers
         if (headers && headers.length > 0) {
           const initialMappings = headers.map((column) => ({
             csv_name: column,
@@ -251,19 +363,16 @@ function SftpGenerator() {
           }));
           setColumnMappings(initialMappings);
         }
-
         setCurrentStep(3);
         setErrorMessage("");
       } else {
         throw new Error(response.message || "Validation failed");
       }
     } catch (error) {
-      console.error("Error:", error);
-      setErrorMessage(error.message || "Error validating data");
-      setIsUploading(false);
+      console.error("Validation error:", error);
+      displayError(error.message || "Error validating data");
     } finally {
       setLoading(false);
-      setProcessingStep("");
     }
   };
 
@@ -733,319 +842,547 @@ function SftpGenerator() {
     <div className="min-h-screen text-gray-700 flex flex-col">
       <Header rightContent={headerRightContent} />
 
-      <div className="max-w-4xl mx-auto p-8 space-y-8 w-full">
-        <div className="mb-12">
-          <header className="text-center">
-            <div className="flex items-center justify-center mb-2">
-              <h1 className="text-4xl font-bold text-black">
-                Generate SFTP Files
-              </h1>
-            </div>
-            <p className="text-gray-500">
-              Import your data into CleverTap via SFTP
-            </p>
-          </header>
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center">
+          <Loading
+            message="Processing your CSV file..."
+            subMessage="This may take a moment depending on file size"
+          />
         </div>
+      ) : (
+        <div className="max-w-4xl mx-auto p-8 space-y-8 w-full">
+          <div className="mb-12">
+            <header className="text-center">
+              <div className="flex items-center justify-center mb-2">
+                <h1 className="text-4xl font-bold text-black">
+                  Generate SFTP Files
+                </h1>
+              </div>
+              <p className="text-gray-500">
+                Import your data into CleverTap via SFTP
+              </p>
+            </header>
+          </div>
 
-        {/* Error Message Display */}
-        {errorMessage && (
-          <div
-            className="bg-gray-100 border-l-4 border-gray-800 text-gray-800 p-4 rounded-lg mb-6"
-            role="alert"
-          >
-            <div className="flex items-center">
-              <i className="fas fa-exclamation-circle text-gray-800 mr-3 text-lg"></i>
-              <div>{errorMessage}</div>
+          {/* Error Message Display */}
+          {errorMessage && (
+            <div
+              className="bg-gray-100 border-l-4 border-gray-800 text-gray-800 p-4 rounded-lg mb-6"
+              role="alert"
+            >
+              <div className="flex items-center">
+                <i className="fas fa-exclamation-circle text-gray-800 mr-3 text-lg"></i>
+                <div>{errorMessage}</div>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Progress Tracker */}
-        <div className="flex justify-between items-center mb-8 px-8">
-          <div className="flex flex-col items-center">
-            <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
-                currentStep >= 1
-                  ? "bg-black text-white"
-                  : "bg-gray-300 text-gray-500"
-              }`}
-            >
-              1
+          {/* Progress Tracker */}
+          <div className="flex justify-between items-center mb-8 px-8">
+            <div className="flex flex-col items-center">
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
+                  currentStep >= 1
+                    ? "bg-black text-white"
+                    : "bg-gray-300 text-gray-500"
+                }`}
+              >
+                1
+              </div>
+              <span
+                className={`text-sm font-medium ${
+                  currentStep >= 1 ? "text-black" : "text-gray-500"
+                }`}
+              >
+                Upload
+              </span>
             </div>
-            <span
-              className={`text-sm font-medium ${
-                currentStep >= 1 ? "text-black" : "text-gray-500"
-              }`}
-            >
-              Upload
-            </span>
-          </div>
-          <div
-            className={`h-1 flex-grow mx-2 ${
-              currentStep >= 2 ? "bg-black" : "bg-gray-300"
-            }`}
-          ></div>
-          <div className="flex flex-col items-center">
             <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
-                currentStep >= 2
-                  ? "bg-black text-white"
-                  : "bg-gray-300 text-gray-500"
+              className={`h-1 flex-grow mx-2 ${
+                currentStep >= 2 ? "bg-black" : "bg-gray-300"
               }`}
-            >
-              2
+            ></div>
+            <div className="flex flex-col items-center">
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
+                  currentStep >= 2
+                    ? "bg-black text-white"
+                    : "bg-gray-300 text-gray-500"
+                }`}
+              >
+                2
+              </div>
+              <span
+                className={`text-sm font-medium ${
+                  currentStep >= 2 ? "text-black" : "text-gray-500"
+                }`}
+              >
+                Map
+              </span>
             </div>
-            <span
-              className={`text-sm font-medium ${
-                currentStep >= 2 ? "text-black" : "text-gray-500"
-              }`}
-            >
-              Map
-            </span>
-          </div>
-          <div
-            className={`h-1 flex-grow mx-2 ${
-              currentStep >= 3 ? "bg-black" : "bg-gray-300"
-            }`}
-          ></div>
-          <div className="flex flex-col items-center">
             <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
-                currentStep >= 3
-                  ? "bg-black text-white"
-                  : "bg-gray-300 text-gray-500"
+              className={`h-1 flex-grow mx-2 ${
+                currentStep >= 3 ? "bg-black" : "bg-gray-300"
               }`}
-            >
-              3
+            ></div>
+            <div className="flex flex-col items-center">
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
+                  currentStep >= 3
+                    ? "bg-black text-white"
+                    : "bg-gray-300 text-gray-500"
+                }`}
+              >
+                3
+              </div>
+              <span
+                className={`text-sm font-medium ${
+                  currentStep >= 3 ? "text-black" : "text-gray-500"
+                }`}
+              >
+                Validate
+              </span>
             </div>
-            <span
-              className={`text-sm font-medium ${
-                currentStep >= 3 ? "text-black" : "text-gray-500"
-              }`}
-            >
-              Validate
-            </span>
-          </div>
-          <div
-            className={`h-1 flex-grow mx-2 ${
-              currentStep >= 4 ? "bg-black" : "bg-gray-300"
-            }`}
-          ></div>
-          <div className="flex flex-col items-center">
             <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
-                currentStep >= 4
-                  ? "bg-black text-white"
-                  : "bg-gray-300 text-gray-500"
+              className={`h-1 flex-grow mx-2 ${
+                currentStep >= 4 ? "bg-black" : "bg-gray-300"
               }`}
-            >
-              4
+            ></div>
+            <div className="flex flex-col items-center">
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
+                  currentStep >= 4
+                    ? "bg-black text-white"
+                    : "bg-gray-300 text-gray-500"
+                }`}
+              >
+                4
+              </div>
+              <span
+                className={`text-sm font-medium ${
+                  currentStep >= 4 ? "text-black" : "text-gray-500"
+                }`}
+              >
+                Generate
+              </span>
             </div>
-            <span
-              className={`text-sm font-medium ${
-                currentStep >= 4 ? "text-black" : "text-gray-500"
-              }`}
-            >
-              Generate
-            </span>
           </div>
+
+          {/* Step 1: Upload File */}
+          {currentStep === 1 && (
+            <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
+              {/* Tab Switcher */}
+              <div className="mb-6 border-b border-gray-200">
+                <div className="flex space-x-4">
+                  <button
+                    onClick={() => setActiveTab("local")}
+                    className={`pb-2 px-4 ${
+                      activeTab === "local"
+                        ? "border-b-2 border-black text-black"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    <i className="fas fa-laptop mr-2"></i>Local File
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("s3")}
+                    className={`pb-2 px-4 ${
+                      activeTab === "s3"
+                        ? "border-b-2 border-black text-black"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    <i className="fab fa-aws mr-2"></i>AWS S3
+                  </button>
+                </div>
+              </div>
+
+              <form onSubmit={(e) => e.preventDefault()}>
+                {activeTab === "local" ? (
+                  // Local file upload
+                  <>
+                    <FileUploader
+                      accept=".csv,text/csv"
+                      maxSize={5}
+                      onFileSelect={(selectedFile) => {
+                        setFile(selectedFile);
+                        setSelectedFileName(
+                          selectedFile ? selectedFile.name : ""
+                        );
+                      }}
+                      onError={(message) => displayError(message)}
+                      supportedFormats="CSV only"
+                      showPreview={true}
+                      disabled={loading}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSubmit}
+                      className="w-full mt-6 bg-black text-white py-3 px-4 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium"
+                      disabled={!file || loading}
+                    >
+                      <i className="fas fa-upload mr-2"></i>Process CSV
+                    </button>
+                  </>
+                ) : (
+                  // S3 file selection
+                  <div className="space-y-4">
+                    {!isS3Connected ? (
+                      // S3 Connection Form
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-600 mb-2">
+                              AWS Region
+                            </label>
+                            <select
+                              value={s3Config.region}
+                              onChange={(e) =>
+                                setS3Config((prev) => ({
+                                  ...prev,
+                                  region: e.target.value,
+                                }))
+                              }
+                              className="w-full pl-3 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all"
+                            >
+                              <option value="">Select Region</option>
+                              <option value="us-east-1">
+                                US East (N. Virginia)
+                              </option>
+                              <option value="us-east-2">US East (Ohio)</option>
+                              <option value="us-west-1">
+                                US West (N. California)
+                              </option>
+                              <option value="us-west-2">
+                                US West (Oregon)
+                              </option>
+                              <option value="af-south-1">
+                                Africa (Cape Town)
+                              </option>
+                              <option value="ap-east-1">
+                                Asia Pacific (Hong Kong)
+                              </option>
+                              <option value="ap-south-1">
+                                Asia Pacific (Mumbai)
+                              </option>
+                              <option value="ap-northeast-1">
+                                Asia Pacific (Tokyo)
+                              </option>
+                              <option value="ap-northeast-2">
+                                Asia Pacific (Seoul)
+                              </option>
+                              <option value="ap-northeast-3">
+                                Asia Pacific (Osaka)
+                              </option>
+                              <option value="ap-southeast-1">
+                                Asia Pacific (Singapore)
+                              </option>
+                              <option value="ap-southeast-2">
+                                Asia Pacific (Sydney)
+                              </option>
+                              <option value="ca-central-1">
+                                Canada (Central)
+                              </option>
+                              <option value="eu-central-1">
+                                Europe (Frankfurt)
+                              </option>
+                              <option value="eu-west-1">
+                                Europe (Ireland)
+                              </option>
+                              <option value="eu-west-2">Europe (London)</option>
+                              <option value="eu-west-3">Europe (Paris)</option>
+                              <option value="eu-north-1">
+                                Europe (Stockholm)
+                              </option>
+                              <option value="eu-south-1">Europe (Milan)</option>
+                              <option value="me-south-1">
+                                Middle East (Bahrain)
+                              </option>
+                              <option value="me-central-1">
+                                Middle East (UAE)
+                              </option>
+                              <option value="sa-east-1">
+                                South America (São Paulo)
+                              </option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-600 mb-2">
+                              Access Key
+                            </label>
+                            <input
+                              type="text"
+                              value={s3Config.accessKey}
+                              onChange={(e) =>
+                                setS3Config((prev) => ({
+                                  ...prev,
+                                  accessKey: e.target.value,
+                                }))
+                              }
+                              className="w-full pl-3 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all"
+                              placeholder="AWS Access Key"
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-sm font-medium text-gray-600 mb-2">
+                              Secret Key
+                            </label>
+                            <input
+                              type="password"
+                              value={s3Config.secretKey}
+                              onChange={(e) =>
+                                setS3Config((prev) => ({
+                                  ...prev,
+                                  secretKey: e.target.value,
+                                }))
+                              }
+                              className="w-full pl-3 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all"
+                              placeholder="AWS Secret Key"
+                            />
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleS3Connect}
+                          disabled={
+                            !s3Config.region ||
+                            !s3Config.accessKey ||
+                            !s3Config.secretKey ||
+                            loading
+                          }
+                          className="w-full bg-black text-white py-2 px-4 rounded hover:bg-gray-800 disabled:bg-gray-400 transition-colors"
+                        >
+                          <i className="fab fa-aws mr-2"></i>Connect to AWS
+                        </button>
+                      </div>
+                    ) : (
+                      // S3 File Browser
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Select Bucket
+                          </label>
+                          <select
+                            value={s3Config.bucket}
+                            onChange={(e) => handleBucketSelect(e.target.value)}
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-black"
+                          >
+                            <option value="">Select Bucket</option>
+                            {buckets.map((bucket) => (
+                              <option key={bucket.Name} value={bucket.Name}>
+                                {bucket.Name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {s3Config.bucket && files.length > 0 && (
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Select File
+                            </label>
+                            <select
+                              value={s3Config.filePath}
+                              onChange={(e) =>
+                                setS3Config((prev) => ({
+                                  ...prev,
+                                  filePath: e.target.value,
+                                }))
+                              }
+                              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-black"
+                            >
+                              <option value="">Select File</option>
+                              {files.map((file) => (
+                                <option key={file.Key} value={file.Key}>
+                                  {file.Key} (
+                                  {(file.Size / (1024 * 1024)).toFixed(2)} MB)
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        <div className="flex justify-between">
+                          <button
+                            onClick={() => {
+                              setIsS3Connected(false);
+                              setS3Config({
+                                region: "",
+                                accessKey: "",
+                                secretKey: "",
+                                bucket: "",
+                                filePath: "",
+                              });
+                              setBuckets([]);
+                              setFiles([]);
+                            }}
+                            className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                          >
+                            <i className="fas fa-redo mr-2"></i>Reset Connection
+                          </button>
+
+                          <button
+                            onClick={handleS3FileSelect}
+                            disabled={!s3Config.filePath || loading}
+                            className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 disabled:bg-gray-400 transition-colors"
+                          >
+                            <i className="fas fa-cloud-download-alt mr-2"></i>
+                            Process Selected File
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </form>
+            </div>
+          )}
+
+          {/* Step 2: Identity Mapping */}
+          {currentStep === 2 && (
+            <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
+              <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
+                <i className="fas fa-fingerprint text-black mr-3"></i>Map
+                Identity Fields
+              </h2>
+
+              <div className="w-full h-px bg-gray-200 mb-6"></div>
+
+              <p className="text-gray-500 mb-6">
+                Please select which columns in your CSV file contain identity
+                information. Identity column is required for validation.
+              </p>
+
+              <div className="space-y-6">
+                <div>
+                  <label
+                    htmlFor="identityColumn"
+                    className="block text-sm font-medium text-gray-600 mb-2"
+                  >
+                    <span className="text-red-500">*</span> Identity Column:
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                      <i className="fas fa-id-card text-gray-400"></i>
+                    </div>
+                    <select
+                      id="identityColumn"
+                      value={identityColumn}
+                      onChange={(e) => setIdentityColumn(e.target.value)}
+                      required
+                      className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
+                    >
+                      <option value="" disabled>
+                        Select Identity Column
+                      </option>
+                      {headers.map((header, index) => (
+                        <option key={index} value={header}>
+                          {header}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                      <i className="fas fa-chevron-down text-gray-400"></i>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-500">
+                    This column uniquely identifies each user (required)
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="emailColumn"
+                    className="block text-sm font-medium text-gray-600 mb-2"
+                  >
+                    Email Column:
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                      <i className="fas fa-envelope text-gray-400"></i>
+                    </div>
+                    <select
+                      id="emailColumn"
+                      value={emailColumn}
+                      onChange={(e) => setEmailColumn(e.target.value)}
+                      className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
+                    >
+                      <option value="">-- Not mapped --</option>
+                      {headers.map((header, index) => (
+                        <option key={index} value={header}>
+                          {header}
+                        </option>
+                      ))}
+                    </select>
+
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                      <i className="fas fa-chevron-down text-gray-400"></i>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Optional: Select the column containing email addresses for
+                    validation
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="phoneColumn"
+                    className="block text-sm font-medium text-gray-600 mb-2"
+                  >
+                    Phone Column:
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                      <i className="fas fa-phone text-gray-400"></i>
+                    </div>
+                    <select
+                      id="phoneColumn"
+                      value={phoneColumn}
+                      onChange={(e) => setPhoneColumn(e.target.value)}
+                      className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
+                    >
+                      <option value="">-- Not mapped --</option>
+                      {headers.map((header, index) => (
+                        <option key={index} value={header}>
+                          {header}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                      <i className="fas fa-chevron-down text-gray-400"></i>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Optional: Select the column containing phone numbers for
+                    validation
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-8 flex justify-between">
+                <button
+                  onClick={() => setCurrentStep(1)}
+                  className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
+                >
+                  <i className="fas fa-arrow-left mr-2"></i>Back
+                </button>
+                <button
+                  onClick={handleContinueToValidation}
+                  className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium"
+                >
+                  Validate Data<i className="fas fa-arrow-right ml-2"></i>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Validation Results */}
+          {currentStep === 3 && renderValidationStep()}
+
+          {/* Step 4: Files Generated */}
+          {currentStep === 4 && renderFilesStep()}
         </div>
-
-        {/* Step 1: Upload File */}
-        {currentStep === 1 && (
-          <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
-            <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
-              <i className="fas fa-file-upload text-black mr-3"></i>Upload CSV
-              File
-            </h2>
-
-            <form onSubmit={handleSubmit}>
-              <FileUploader
-                accept=".csv,text/csv"
-                maxSize={5} // 5GB limit
-                onFileSelect={(selectedFile) => {
-                  setFile(selectedFile);
-                  setSelectedFileName(selectedFile ? selectedFile.name : "");
-                }}
-                onError={(message) => displayError(message)}
-                supportedFormats="CSV only"
-                showPreview={true}
-                disabled={loading}
-              />
-
-              <button
-                type="submit"
-                className="w-full mt-6 bg-black text-white py-3 px-4 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium"
-                disabled={!file || loading}
-              >
-                <i className="fas fa-upload mr-2"></i>Process CSV
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* Step 2: Identity Mapping */}
-        {currentStep === 2 && (
-          <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
-            <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
-              <i className="fas fa-fingerprint text-black mr-3"></i>Map Identity
-              Fields
-            </h2>
-
-            <div className="w-full h-px bg-gray-200 mb-6"></div>
-
-            <p className="text-gray-500 mb-6">
-              Please select which columns in your CSV file contain identity
-              information. Identity column is required for validation.
-            </p>
-
-            <div className="space-y-6">
-              <div>
-                <label
-                  htmlFor="identityColumn"
-                  className="block text-sm font-medium text-gray-600 mb-2"
-                >
-                  <span className="text-red-500">*</span> Identity Column:
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                    <i className="fas fa-id-card text-gray-400"></i>
-                  </div>
-                  <select
-                    id="identityColumn"
-                    value={identityColumn}
-                    onChange={(e) => setIdentityColumn(e.target.value)}
-                    required
-                    className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
-                  >
-                    <option value="" disabled>
-                      Select Identity Column
-                    </option>
-                    {headers.map((header, index) => (
-                      <option key={index} value={header}>
-                        {header}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                    <i className="fas fa-chevron-down text-gray-400"></i>
-                  </div>
-                </div>
-                <p className="mt-1 text-sm text-gray-500">
-                  This column uniquely identifies each user (required)
-                </p>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="emailColumn"
-                  className="block text-sm font-medium text-gray-600 mb-2"
-                >
-                  Email Column:
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                    <i className="fas fa-envelope text-gray-400"></i>
-                  </div>
-                  <select
-                    id="emailColumn"
-                    value={emailColumn}
-                    onChange={(e) => setEmailColumn(e.target.value)}
-                    className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
-                  >
-                    <option value="">-- Not mapped --</option>
-                    {headers.map((header, index) => (
-                      <option key={index} value={header}>
-                        {header}
-                      </option>
-                    ))}
-                  </select>
-
-                  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                    <i className="fas fa-chevron-down text-gray-400"></i>
-                  </div>
-                </div>
-                <p className="mt-1 text-sm text-gray-500">
-                  Optional: Select the column containing email addresses for
-                  validation
-                </p>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="phoneColumn"
-                  className="block text-sm font-medium text-gray-600 mb-2"
-                >
-                  Phone Column:
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                    <i className="fas fa-phone text-gray-400"></i>
-                  </div>
-                  <select
-                    id="phoneColumn"
-                    value={phoneColumn}
-                    onChange={(e) => setPhoneColumn(e.target.value)}
-                    className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
-                  >
-                    <option value="">-- Not mapped --</option>
-                    {headers.map((header, index) => (
-                      <option key={index} value={header}>
-                        {header}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                    <i className="fas fa-chevron-down text-gray-400"></i>
-                  </div>
-                </div>
-                <p className="mt-1 text-sm text-gray-500">
-                  Optional: Select the column containing phone numbers for
-                  validation
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-8 flex justify-between">
-              <button
-                onClick={() => setCurrentStep(1)}
-                className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
-              >
-                <i className="fas fa-arrow-left mr-2"></i>Back
-              </button>
-              <button
-                onClick={handleContinueToValidation}
-                className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium"
-              >
-                Validate Data<i className="fas fa-arrow-right ml-2"></i>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: Validation Results */}
-        {currentStep === 3 && renderValidationStep()}
-
-        {/* Step 4: Files Generated */}
-        {currentStep === 4 && renderFilesStep()}
-
-        {/* Loading state */}
-        {loading && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-lg flex items-center space-x-4">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-black"></div>
-              <div>
-                <p className="text-gray-700 font-medium">
-                  Processing your CSV file...
-                </p>
-                <p className="text-gray-500 text-sm">
-                  This may take a moment depending on file size
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       <Footer />
     </div>
