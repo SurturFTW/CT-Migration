@@ -10,11 +10,11 @@ import {
   fetchFromS3,
 } from "../services/api";
 
-import Header from "./Header";
-import Footer from "./Footer";
-import ColumnMapping from "./ColumnMapping";
-import FileUploader from "./FileUploader";
-import Loading from "./Loading";
+import Header from "./common/Header";
+import Footer from "./common/Footer";
+import ColumnMapping from "./common/ColumnMapping";
+import FileUploader from "./common/FileUploader";
+import Loading from "./common/Loading";
 
 function SftpGenerator() {
   const navigate = useNavigate();
@@ -87,7 +87,7 @@ function SftpGenerator() {
   };
 
   // Handle form submission for file upload
-  const handleSubmit = async (e) => {
+  const handleSubmit = async () => {
     if (!file) {
       setErrorMessage("Please select a CSV file");
       return;
@@ -213,15 +213,11 @@ function SftpGenerator() {
     try {
       setLoading(true);
       setErrorMessage("");
+      setIsUploading(true);
+      setProcessingStep("Fetching file from S3");
+      setUploadProgress(0);
 
-      if (!s3Config.filePath || !s3Config.bucket) {
-        throw new Error("Please select a file from the bucket");
-      }
-
-      if (!s3Config.filePath.toLowerCase().endsWith(".csv")) {
-        throw new Error("Please select a CSV file");
-      }
-
+      // Step 1: Get file from S3
       const response = await fetchFromS3({
         region: s3Config.region,
         accessKey: s3Config.accessKey,
@@ -230,19 +226,42 @@ function SftpGenerator() {
         filePath: s3Config.filePath,
       });
 
-      if (response.success) {
-        setFile(response.filepath);
-        setHeaders(response.headers);
-        setSelectedFileName(response.filename);
-        setTotalRows(response.rowCount);
-        setCurrentStep(2);
-      } else {
+      if (!response.success) {
         throw new Error(response.error || "Failed to fetch file from S3");
       }
+
+      // Set basic file information
+      setHeaders(response.headers || []);
+      setFilePath(response.filepath || "");
+      setTotalRows(response.rowCount || 0);
+      setSelectedFileName(s3Config.filePath.split("/").pop());
+
+      // Create File object from response
+      const formData = new FormData();
+      const file = new File(
+        [response.csvContent || ""],
+        s3Config.filePath.split("/").pop(),
+        { type: "text/csv" }
+      );
+      formData.append("file", file);
+      setFile(file);
+
+      // Auto-detect columns
+      if (response.headers && response.headers.length > 0) {
+        autoDetectColumns(response.headers);
+      }
+
+      // Move to mapping step
+      setCurrentStep(2);
+      setErrorMessage("");
     } catch (error) {
-      displayError(error.message);
+      console.error("S3 file processing error:", error);
+      displayError(error.message || "Failed to process S3 file");
     } finally {
       setLoading(false);
+      setIsUploading(false);
+      setProcessingStep("");
+      setUploadProgress(0);
     }
   };
 
@@ -344,6 +363,7 @@ function SftpGenerator() {
 
     try {
       setLoading(true);
+      console.log("Starting validation with identity column:", identityColumn);
 
       const formData = new FormData();
       formData.append("file", file);
@@ -351,20 +371,39 @@ function SftpGenerator() {
       formData.append("emailColumn", emailColumn || "");
       formData.append("phoneColumn", phoneColumn || "");
 
+      console.log("Sending validation request with:", {
+        identity: identityColumn,
+        email: emailColumn,
+        phone: phoneColumn,
+        fileName: selectedFileName,
+      });
+
       const response = await validateCSVData(formData);
+      console.log("Received validation response:", response);
 
       if (response.success) {
-        setValidationResults(response.results);
+        // Store validation results directly
+        const results = response.results || {};
+        setValidationResults(results);
+        console.log("Setting validation results to:", results);
+
+        // Create initial column mappings
+        let initialMappings = [];
         if (headers && headers.length > 0) {
-          const initialMappings = headers.map((column) => ({
+          initialMappings = headers.map((column) => ({
             csv_name: column,
             clevertap_name: column,
             type: "string",
           }));
           setColumnMappings(initialMappings);
         }
+
+        // Move to the validation results step - make sure state is updated
         setCurrentStep(3);
         setErrorMessage("");
+
+        // Add direct console log to verify step update
+        console.log("Updated current step to:", 3);
       } else {
         throw new Error(response.message || "Validation failed");
       }
@@ -644,6 +683,8 @@ function SftpGenerator() {
 
   // Render validation step
   const renderValidationStep = () => {
+    console.log("Rendering validation step with results:", validationResults);
+
     return (
       <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
         <h2 className="text-2xl font-semibold text-black mb-2 flex items-center">
@@ -651,21 +692,26 @@ function SftpGenerator() {
           Results
         </h2>
 
-        {/* Show validation results first */}
-        {validationResults && !validationResults.validationErrors && (
+        {/* Show validation results first - ensure these are visible */}
+        {validationResults && (
           <div className="mb-6 p-4 bg-green-50 text-green-800 rounded-lg border border-green-200">
             <div className="flex">
               <i className="fas fa-check-circle mr-2 text-xl"></i>
               <span className="font-medium">
-                CSV file validated successfully! You can now customize column
-                mappings below.
+                CSV file processed!{" "}
+                {validationResults.validationErrors
+                  ? "Please review the validation issues below."
+                  : "Your data validated successfully."}
               </span>
             </div>
             <div className="mt-4">
               <span className="font-medium">Summary:</span>
               <ul className="list-disc pl-5 mt-2">
                 <li>Total records: {totalRows}</li>
-                <li>Valid records: {totalRows}</li>
+                <li>
+                  Valid records:{" "}
+                  {validationResults.validRecordCount || totalRows}
+                </li>
                 <li>Identity field: {identityColumn}</li>
                 {emailColumn && <li>Email field: {emailColumn}</li>}
                 {phoneColumn && <li>Phone field: {phoneColumn}</li>}
@@ -674,6 +720,7 @@ function SftpGenerator() {
           </div>
         )}
 
+        {/* Show validation errors if present */}
         {validationResults && validationResults.validationErrors && (
           <div className="mb-6 p-4 bg-orange-50 text-orange-800 rounded-lg border border-orange-200">
             <div className="flex">
@@ -692,6 +739,16 @@ function SftpGenerator() {
                     have blank identity values
                   </li>
                 )}
+                {validationResults.validationErrors.duplicateCount > 0 && (
+                  <li>
+                    {validationResults.validationErrors.duplicateCount}{" "}
+                    duplicate identity values found
+                  </li>
+                )}
+                {validationResults.validationErrors.otherIssues &&
+                  validationResults.validationErrors.otherIssues.map(
+                    (issue, idx) => <li key={idx}>{issue}</li>
+                  )}
               </ul>
             </div>
           </div>
@@ -707,7 +764,7 @@ function SftpGenerator() {
                   onClick={() =>
                     downloadFile(
                       validationResults.validationErrors.logFileUrl,
-                      "validation_log.csv"
+                      "validation_log"
                     )
                   }
                   className="w-full bg-gray-400 text-white px-4 py-3 rounded-lg hover:bg-gray-500 transition-colors flex items-center justify-center font-medium"
@@ -724,7 +781,7 @@ function SftpGenerator() {
                 onClick={() =>
                   downloadFile(
                     validationResults.validEntriesUrl,
-                    "valid_entries.csv"
+                    "valid_entries"
                   )
                 }
                 className="w-full bg-black text-white px-4 py-3 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium"
@@ -735,7 +792,7 @@ function SftpGenerator() {
           )}
         </div>
 
-        {/* Client Information with less spacing */}
+        {/* Client Information section */}
         <div className="mb-6 border-t border-gray-200 pt-4">
           <h3 className="text-lg font-semibold text-black mb-4">
             Client Information
@@ -764,8 +821,8 @@ function SftpGenerator() {
           </div>
         </div>
 
-        {/* Column Mapping section with less spacing */}
-        {!validationResults?.validationErrors && (
+        {/* Column Mapping section - only show if validation passed or has no errors */}
+        {validationResults && !validationResults.validationErrors && (
           <>
             <div className="mb-6 border-t border-gray-200 pt-4">
               <h3 className="text-lg font-semibold text-black mb-4">
@@ -845,7 +902,7 @@ function SftpGenerator() {
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
           <Loading
-            message="Processing your CSV file..."
+            message="Processing your request..."
             subMessage="This may take a moment depending on file size"
           />
         </div>
@@ -917,7 +974,7 @@ function SftpGenerator() {
                   currentStep >= 2 ? "text-black" : "text-gray-500"
                 }`}
               >
-                Map
+                Validate
               </span>
             </div>
             <div
@@ -940,7 +997,7 @@ function SftpGenerator() {
                   currentStep >= 3 ? "text-black" : "text-gray-500"
                 }`}
               >
-                Validate
+                Map
               </span>
             </div>
             <div
@@ -997,7 +1054,9 @@ function SftpGenerator() {
                 </div>
               </div>
 
-              <form onSubmit={(e) => e.preventDefault()}>
+              <div className="space-y-4">
+                {" "}
+                {/* Changed from form to div */}
                 {activeTab === "local" ? (
                   // Local file upload
                   <>
@@ -1142,7 +1201,11 @@ function SftpGenerator() {
                           </div>
                         </div>
                         <button
-                          onClick={handleS3Connect}
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleS3Connect();
+                          }}
                           disabled={
                             !s3Config.region ||
                             !s3Config.accessKey ||
@@ -1233,7 +1296,7 @@ function SftpGenerator() {
                     )}
                   </div>
                 )}
-              </form>
+              </div>
             </div>
           )}
 
@@ -1369,6 +1432,7 @@ function SftpGenerator() {
                 <button
                   onClick={handleContinueToValidation}
                   className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium"
+                  disabled={!identityColumn}
                 >
                   Validate Data<i className="fas fa-arrow-right ml-2"></i>
                 </button>

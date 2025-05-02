@@ -42,19 +42,28 @@ export const uploadCSV = async (formData, onUploadProgress) => {
   }
 };
 
-export const validateCSVData = async (formData, onUploadProgress) => {
+// Validate CSV data
+export const validateCSVData = async (formData) => {
   try {
-    const response = await api.post("/validate_csv", formData, {
-      headers: {
-        "Content-Type": "multipart/form-data",
-      },
-      onUploadProgress: onUploadProgress,
-      timeout: 3600000, // 1 hour
+    console.log("Validating CSV data...");
+
+    const response = await fetch(`${API_URL}/validate_csv`, {
+      method: "POST",
+      body: formData,
     });
-    return response.data;
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || "Server error");
+    }
+
+    const data = await response.json();
+    console.log("Validation response:", data);
+
+    return data;
   } catch (error) {
-    console.error("Validation API error:", error);
-    throw error.response?.data || error;
+    console.error("Error validating CSV:", error);
+    throw error;
   }
 };
 

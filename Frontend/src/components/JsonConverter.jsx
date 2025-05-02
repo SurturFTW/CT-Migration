@@ -2,9 +2,9 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { convertJsonToCsv } from "../services/api";
 
-import Header from "./Header";
-import Footer from "./Footer";
-import FileUploader from "./FileUploader";
+import Header from "./common/Header";
+import Footer from "./common/Footer";
+import FileUploader from "./common/FileUploader";
 
 function JsonConverter() {
   const navigate = useNavigate();
@@ -144,98 +144,112 @@ function JsonConverter() {
     <div className="min-h-screen bg-white text-gray-700 flex flex-col">
       {/* Header */}
       <Header rightContent={headerRightContent} />
-
       <div className="max-w-4xl mx-auto p-8 space-y-8 w-full">
-        <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300 transition-all">
-          <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
-            <i className="fas fa-file-upload text-black mr-3"></i>Upload JSON
-            File
-          </h2>
-
-          {/* Error or Success Messages */}
-          {errorMessage && (
-            <div className="bg-gray-100 border-l-4 border-black text-gray-700 p-4 mb-4 rounded">
-              <div className="flex items-center">
-                <div className="text-lg mr-2">
-                  <i className="fas fa-exclamation-circle"></i>
-                </div>
-                <p>{errorMessage}</p>
-              </div>
+        <div className="mb-12">
+          <header className="text-center">
+            <div className="flex items-center justify-center mb-2">
+              <h1 className="text-4xl font-bold text-black">
+                Convert JSON to CSV
+              </h1>
             </div>
-          )}
+            <p className="text-gray-500">
+              Upload your JSON file and convert it to CSV format.
+            </p>
+          </header>
+        </div>
 
-          {successMessage && (
-            <div className="bg-gray-100 border-l-4 border-black text-gray-700 p-4 mb-4 rounded">
-              <div className="flex items-center">
-                <div className="text-lg mr-2">
-                  <i className="fas fa-check-circle"></i>
-                </div>
-                <p>{successMessage}</p>
-              </div>
-            </div>
-          )}
+        <div className="max-w-4xl mx-auto p-8 space-y-8 w-full">
+          <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300 transition-all">
+            <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
+              <i className="fas fa-file-upload text-black mr-3"></i>Upload JSON
+              File
+            </h2>
 
-          <div className="space-y-6">
-            {/* Replace the old file upload with our new component */}
-            <FileUploader
-              accept=".json,application/json"
-              maxSize={5}
-              onFileSelect={handleFileSelect}
-              onError={showError}
-              supportedFormats="JSON only"
-              disabled={showProgress}
-            />
-
-            <button
-              onClick={handleJsonConversion}
-              className={`w-full bg-gray-800 text-white py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center font-medium ${
-                convertDisabled ? "opacity-50 cursor-not-allowed" : ""
-              }`}
-              disabled={convertDisabled}
-            >
-              <i className="fas fa-sync-alt mr-2"></i>Convert to CSV
-            </button>
-
-            {showProgress && (
-              <div className="space-y-4">
-                <h3 className="font-semibold text-gray-800">
-                  Conversion Progress
-                </h3>
-                <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
-                  <div
-                    className="h-full bg-gray-800 text-xs text-white text-center leading-4"
-                    style={{ width: `${progress}%` }}
-                  >
-                    {`${Math.round(progress)}%`}
+            {/* Error or Success Messages */}
+            {errorMessage && (
+              <div className="bg-gray-100 border-l-4 border-black text-gray-700 p-4 mb-4 rounded">
+                <div className="flex items-center">
+                  <div className="text-lg mr-2">
+                    <i className="fas fa-exclamation-circle"></i>
                   </div>
+                  <p>{errorMessage}</p>
                 </div>
-                <div className="text-sm text-gray-600 italic">{status}</div>
               </div>
             )}
 
-            {showResult && (
-              <div className="space-y-4">
-                <h3 className="font-semibold text-gray-800">
-                  Conversion Complete
-                </h3>
-                <p className="text-gray-600">
-                  Your file has been successfully converted!
-                </p>
-                <a
-                  href={downloadUrl}
-                  download={downloadFilename}
-                  className="block w-full bg-gray-800 text-white text-center py-3 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center font-medium"
-                >
-                  <i className="fas fa-download mr-2"></i>Download CSV
-                </a>
-                <button
-                  onClick={handleClearFile}
-                  className="block w-full border border-gray-400 text-gray-700 text-center py-2 rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center font-medium mt-2"
-                >
-                  <i className="fas fa-redo mr-2"></i>Convert Another File
-                </button>
+            {successMessage && (
+              <div className="bg-gray-100 border-l-4 border-black text-gray-700 p-4 mb-4 rounded">
+                <div className="flex items-center">
+                  <div className="text-lg mr-2">
+                    <i className="fas fa-check-circle"></i>
+                  </div>
+                  <p>{successMessage}</p>
+                </div>
               </div>
             )}
+
+            <div className="space-y-6">
+              {/* Replace the old file upload with our new component */}
+              <FileUploader
+                accept=".json,application/json"
+                maxSize={5}
+                onFileSelect={handleFileSelect}
+                onError={showError}
+                supportedFormats="JSON only"
+                disabled={showProgress}
+              />
+
+              <button
+                onClick={handleJsonConversion}
+                className={`w-full bg-gray-800 text-white py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center font-medium ${
+                  convertDisabled ? "opacity-50 cursor-not-allowed" : ""
+                }`}
+                disabled={convertDisabled}
+              >
+                <i className="fas fa-sync-alt mr-2"></i>Convert to CSV
+              </button>
+
+              {showProgress && (
+                <div className="space-y-4">
+                  <h3 className="font-semibold text-gray-800">
+                    Conversion Progress
+                  </h3>
+                  <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                    <div
+                      className="h-full bg-gray-800 text-xs text-white text-center leading-4"
+                      style={{ width: `${progress}%` }}
+                    >
+                      {`${Math.round(progress)}%`}
+                    </div>
+                  </div>
+                  <div className="text-sm text-gray-600 italic">{status}</div>
+                </div>
+              )}
+
+              {showResult && (
+                <div className="space-y-4">
+                  <h3 className="font-semibold text-gray-800">
+                    Conversion Complete
+                  </h3>
+                  <p className="text-gray-600">
+                    Your file has been successfully converted!
+                  </p>
+                  <a
+                    href={downloadUrl}
+                    download={downloadFilename}
+                    className="block w-full bg-gray-800 text-white text-center py-3 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center font-medium"
+                  >
+                    <i className="fas fa-download mr-2"></i>Download CSV
+                  </a>
+                  <button
+                    onClick={handleClearFile}
+                    className="block w-full border border-gray-400 text-gray-700 text-center py-2 rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center font-medium mt-2"
+                  >
+                    <i className="fas fa-redo mr-2"></i>Convert Another File
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

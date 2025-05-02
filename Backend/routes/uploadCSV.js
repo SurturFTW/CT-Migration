@@ -29,6 +29,7 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 * 1024 },
 });
 
+// Replace the existing /upload_csv route with this version
 router.post("/upload_csv", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
@@ -36,24 +37,17 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
 
   const filePath = req.file.path;
   let columns = [];
-  let sampleRows = [];
   let totalRows = 0;
-  let rowsToSample = 100;
 
   try {
-    // Use stream processing to count total rows without loading entire file
     await new Promise((resolve, reject) => {
       fs.createReadStream(filePath, { encoding: "utf-8" })
         .pipe(csv.parse({ headers: true }))
         .on("headers", (headers) => {
           columns = headers;
         })
-        .on("data", (row) => {
+        .on("data", () => {
           totalRows++;
-          // Only collect sample rows for preview
-          if (sampleRows.length < rowsToSample) {
-            sampleRows.push(row);
-          }
         })
         .on("end", resolve)
         .on("error", reject);
@@ -64,7 +58,6 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
       fileName: req.file.originalname,
       columns: columns,
       totalRows: totalRows,
-      data: sampleRows, // Only send sample data for UI preview
       filePath: req.file.path,
     });
   } catch (error) {

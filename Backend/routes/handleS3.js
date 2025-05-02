@@ -115,10 +115,7 @@ router.post("/fetch-from-s3", async (req, res) => {
       region: region,
     });
 
-    // Create S3 service object
     const s3 = new AWS.S3();
-
-    // Set up parameters
     const params = {
       Bucket: bucket,
       Key: filePath,
@@ -131,7 +128,7 @@ router.post("/fetch-from-s3", async (req, res) => {
       __dirname,
       "..",
       "uploads",
-      `s3_${timestamp}_${filename}`
+      `${filename}_${timestamp}_.csv`
     );
 
     // Ensure uploads directory exists
@@ -140,79 +137,36 @@ router.post("/fetch-from-s3", async (req, res) => {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
 
-    // Create a write stream to save the file locally
-    const fileStream = fs.createWriteStream(localFilePath);
+    const headers = [];
+    let rowCount = 0;
 
-    // Get the object from S3
-    const s3Stream = s3.getObject(params).createReadStream();
-
-    // Pipe the S3 stream to the local file
-    s3Stream.pipe(fileStream);
-
-    // Process when download completes
-    fileStream.on("finish", () => {
-      // Read the first few rows to get headers
-      const headers = [];
-      let rowCount = 0;
-      let readStream = null;
-
-      try {
-        readStream = fs
-          .createReadStream(localFilePath)
-          .pipe(csv())
-          .on("headers", (headerList) => {
-            headers.push(...headerList);
-          })
-          .on("data", () => {
-            rowCount++;
-            // Just count rows, don't need to process data yet
-            if (rowCount >= 5) {
-              // We just need headers, can end stream early - FIXED THIS LINE
-              readStream.destroy(); // This is the proper way to end the stream
-            }
-          })
-          .on("end", () => {
-            res.json({
-              success: true,
-              message: "File successfully fetched from S3",
-              filepath: localFilePath,
-              filename: filename,
-              headers: headers,
-              rowCount: rowCount,
-            });
-          })
-          .on("error", (err) => {
-            console.error("Error reading CSV:", err);
-            res.status(500).json({
-              success: false,
-              error: `Error reading CSV file: ${err.message}`,
-            });
-          });
-      } catch (csvError) {
-        console.error("CSV processing error:", csvError);
+    // Stream directly from S3 and process CSV
+    s3.getObject(params)
+      .createReadStream()
+      .pipe(csv())
+      .on("headers", (headerList) => {
+        headers.push(...headerList);
+      })
+      .on("data", () => {
+        rowCount++;
+      })
+      .on("end", () => {
+        res.json({
+          success: true,
+          message: "File successfully fetched from S3",
+          filepath: localFilePath,
+          filename: filename,
+          headers: headers,
+          rowCount: rowCount,
+        });
+      })
+      .on("error", (err) => {
+        console.error("Error processing CSV:", err);
         res.status(500).json({
           success: false,
-          error: `Error processing CSV file: ${csvError.message}`,
+          error: `Error processing CSV file: ${err.message}`,
         });
-      }
-    });
-
-    // Handle errors
-    s3Stream.on("error", (err) => {
-      console.error("S3 Error:", err);
-      res.status(500).json({
-        success: false,
-        error: `Error fetching file from S3: ${err.message}`,
       });
-    });
-
-    fileStream.on("error", (err) => {
-      console.error("File Stream Error:", err);
-      res.status(500).json({
-        success: false,
-        error: `Error writing file: ${err.message}`,
-      });
-    });
   } catch (error) {
     console.error("Error:", error);
     res.status(500).json({
