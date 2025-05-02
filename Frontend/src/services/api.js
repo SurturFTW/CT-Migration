@@ -43,27 +43,33 @@ export const uploadCSV = async (formData, onUploadProgress) => {
 };
 
 // Validate CSV data
-export const validateCSVData = async (formData) => {
+export const validateCSVMapping = async (formData, progressCallback) => {
   try {
-    console.log("Validating CSV data...");
+    const response = await axios.post(
+      `${
+        process.env.REACT_APP_API_URL || "http://localhost:5000"
+      }/api/validate_csv`,
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+        onUploadProgress: progressCallback,
+      }
+    );
 
-    const response = await fetch(`${API_URL}/validate_csv`, {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.message || "Server error");
-    }
-
-    const data = await response.json();
-    console.log("Validation response:", data);
-
-    return data;
+    return response.data;
   } catch (error) {
-    console.error("Error validating CSV:", error);
-    throw error;
+    console.error("Validation error:", error);
+
+    // Extract error message from response if available
+    const errorMessage =
+      error.response?.data?.message ||
+      error.response?.data?.error ||
+      error.message ||
+      "Error validating CSV";
+
+    throw new Error(errorMessage);
   }
 };
 

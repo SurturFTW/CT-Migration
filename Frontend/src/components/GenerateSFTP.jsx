@@ -3,11 +3,11 @@ import { useNavigate } from "react-router-dom";
 
 import {
   uploadCSV,
-  validateCSVData,
   generateFiles,
   listS3Buckets,
   listS3Files,
   fetchFromS3,
+  validateCSVMapping,
 } from "../services/api";
 
 import Header from "./common/Header";
@@ -354,7 +354,7 @@ function SftpGenerator() {
     };
   }, []);
 
-  // Continue to validation after identity mapping
+  // Continue to validation after identity mapping\
   const handleContinueToValidation = async () => {
     if (!identityColumn) {
       displayError("Identity column is required");
@@ -363,6 +363,7 @@ function SftpGenerator() {
 
     try {
       setLoading(true);
+      setErrorMessage("");
       console.log("Starting validation with identity column:", identityColumn);
 
       const formData = new FormData();
@@ -378,37 +379,45 @@ function SftpGenerator() {
         fileName: selectedFileName,
       });
 
-      const response = await validateCSVData(formData);
-      console.log("Received validation response:", response);
-
-      if (response.success) {
-        // Store validation results directly
-        const results = response.results || {};
-        setValidationResults(results);
-        console.log("Setting validation results to:", results);
-
-        // Create initial column mappings
-        let initialMappings = [];
-        if (headers && headers.length > 0) {
-          initialMappings = headers.map((column) => ({
-            csv_name: column,
-            clevertap_name: column,
-            type: "string",
-          }));
-          setColumnMappings(initialMappings);
+      // Use the new API function for validation
+      const responseData = await validateCSVMapping(
+        formData,
+        (progressEvent) => {
+          const percentCompleted = Math.round(
+            (progressEvent.loaded * 100) / progressEvent.total
+          );
+          setUploadProgress(percentCompleted);
         }
+      );
 
-        // Move to the validation results step - make sure state is updated
-        setCurrentStep(3);
-        setErrorMessage("");
+      console.log("Validation response data:", responseData);
 
-        // Add direct console log to verify step update
-        console.log("Updated current step to:", 3);
-      } else {
-        throw new Error(response.message || "Validation failed");
+      // Set validation results
+      setValidationResults(responseData);
+
+      // Create initial column mappings
+      if (headers && headers.length > 0) {
+        const initialMappings = headers.map((column) => ({
+          csv_name: column,
+          clevertap_name: column,
+          type: "string",
+          originalName: column,
+        }));
+        setColumnMappings(initialMappings);
       }
     } catch (error) {
       console.error("Validation error:", error);
+      // Create a basic validation result object with the error
+      const errorResults = {
+        success: false,
+        validationErrors: {
+          message: error.message || "Error validating data",
+          otherIssues: [error.message || "Unknown validation error occurred"],
+        },
+      };
+
+      // Still set validation results so we can show the error in the UI
+      setValidationResults(errorResults);
       displayError(error.message || "Error validating data");
     } finally {
       setLoading(false);
@@ -531,7 +540,6 @@ function SftpGenerator() {
       const link = document.createElement("a");
       link.href = downloadUrl;
       link.setAttribute("download", fileName);
-      link.setAttribute("target", "_blank");
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -620,7 +628,7 @@ function SftpGenerator() {
               </div>
             )}
 
-            {links.manifest && (
+            {/* {links.manifest && (
               <div className="p-4 border border-gray-200 rounded-md bg-white">
                 <div className="flex justify-between items-center">
                   <div className="flex items-center">
@@ -662,7 +670,7 @@ function SftpGenerator() {
                   </button>
                 </div>
               </div>
-            )}
+            )} */}
           </div>
         </div>
 
@@ -676,124 +684,32 @@ function SftpGenerator() {
           >
             <i className="fas fa-redo mr-2"></i>Start Over
           </button>
+
+          <button
+            onClick={() => navigate("/dashboard")}
+            className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium"
+          >
+            <i className="fas fa-home mr-2"></i>Go to Dashboard
+          </button>
         </div>
       </div>
     );
   };
 
   // Render validation step
+  // Render mapping step (formerly validation step)
   const renderValidationStep = () => {
-    console.log("Rendering validation step with results:", validationResults);
-
     return (
       <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
-        <h2 className="text-2xl font-semibold text-black mb-2 flex items-center">
-          <i className="fas fa-check-circle text-black mr-3"></i>Validation
-          Results
+        <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
+          <i className="fas fa-map-marked-alt text-black mr-3"></i>Column
+          Mapping
         </h2>
 
-        {/* Show validation results first - ensure these are visible */}
-        {validationResults && (
-          <div className="mb-6 p-4 bg-green-50 text-green-800 rounded-lg border border-green-200">
-            <div className="flex">
-              <i className="fas fa-check-circle mr-2 text-xl"></i>
-              <span className="font-medium">
-                CSV file processed!{" "}
-                {validationResults.validationErrors
-                  ? "Please review the validation issues below."
-                  : "Your data validated successfully."}
-              </span>
-            </div>
-            <div className="mt-4">
-              <span className="font-medium">Summary:</span>
-              <ul className="list-disc pl-5 mt-2">
-                <li>Total records: {totalRows}</li>
-                <li>
-                  Valid records:{" "}
-                  {validationResults.validRecordCount || totalRows}
-                </li>
-                <li>Identity field: {identityColumn}</li>
-                {emailColumn && <li>Email field: {emailColumn}</li>}
-                {phoneColumn && <li>Phone field: {phoneColumn}</li>}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* Show validation errors if present */}
-        {validationResults && validationResults.validationErrors && (
-          <div className="mb-6 p-4 bg-orange-50 text-orange-800 rounded-lg border border-orange-200">
-            <div className="flex">
-              <i className="fas fa-exclamation-triangle mr-2 text-xl"></i>
-              <span className="font-medium">
-                Validation issues found. Please review and fix before
-                proceeding.
-              </span>
-            </div>
-            <div className="mt-4">
-              <span className="font-medium">Issues:</span>
-              <ul className="list-disc pl-5 mt-2">
-                {validationResults.validationErrors.blankIdentityCount > 0 && (
-                  <li>
-                    {validationResults.validationErrors.blankIdentityCount} rows
-                    have blank identity values
-                  </li>
-                )}
-                {validationResults.validationErrors.duplicateCount > 0 && (
-                  <li>
-                    {validationResults.validationErrors.duplicateCount}{" "}
-                    duplicate identity values found
-                  </li>
-                )}
-                {validationResults.validationErrors.otherIssues &&
-                  validationResults.validationErrors.otherIssues.map(
-                    (issue, idx) => <li key={idx}>{issue}</li>
-                  )}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* Download buttons */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          {validationResults &&
-            validationResults.validationErrors &&
-            validationResults.validationErrors.logFileUrl && (
-              <div>
-                <button
-                  onClick={() =>
-                    downloadFile(
-                      validationResults.validationErrors.logFileUrl,
-                      "validation_log"
-                    )
-                  }
-                  className="w-full bg-gray-400 text-white px-4 py-3 rounded-lg hover:bg-gray-500 transition-colors flex items-center justify-center font-medium"
-                >
-                  <i className="fas fa-download mr-2"></i>Download Validation
-                  Log
-                </button>
-              </div>
-            )}
-
-          {validationResults && validationResults.validEntriesUrl && (
-            <div>
-              <button
-                onClick={() =>
-                  downloadFile(
-                    validationResults.validEntriesUrl,
-                    "valid_entries"
-                  )
-                }
-                className="w-full bg-black text-white px-4 py-3 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium"
-              >
-                <i className="fas fa-file-download mr-2"></i>Download Valid CSV
-              </button>
-            </div>
-          )}
-        </div>
+        <div className="w-full h-px bg-gray-200 mb-6"></div>
 
         {/* Client Information section */}
-        <div className="mb-6 border-t border-gray-200 pt-4">
+        <div className="mb-6">
           <h3 className="text-lg font-semibold text-black mb-4">
             Client Information
           </h3>
@@ -821,58 +737,55 @@ function SftpGenerator() {
           </div>
         </div>
 
-        {/* Column Mapping section - only show if validation passed or has no errors */}
-        {validationResults && !validationResults.validationErrors && (
-          <>
-            <div className="mb-6 border-t border-gray-200 pt-4">
-              <h3 className="text-lg font-semibold text-black mb-4">
-                Data Configuration
-              </h3>
-              <p className="text-gray-500 mb-4">
-                Specify how each column should be mapped to CleverTap. You can
-                customize field names and data types.
-              </p>
+        {/* Column Mapping section */}
+        <div className="mb-6 border-t border-gray-200 pt-4">
+          <h3 className="text-lg font-semibold text-black mb-4">
+            Data Configuration
+          </h3>
+          <p className="text-gray-500 mb-4">
+            Specify how each column should be mapped to CleverTap. You can
+            customize field names and data types.
+          </p>
 
-              <div className="mb-5">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Data Type:
-                </label>
-                <div className="flex space-x-4 mb-4">
-                  <label className="inline-flex items-center">
-                    <input
-                      type="radio"
-                      className="form-radio h-4 w-4"
-                      name="dataType"
-                      value="profile"
-                      checked={dataType === "profile"}
-                      onChange={() => setDataType("profile")}
-                    />
-                    <span className="ml-2 text-gray-700">Profile Data</span>
-                  </label>
-                  <label className="inline-flex items-center">
-                    <input
-                      type="radio"
-                      className="form-radio h-4 w-4"
-                      name="dataType"
-                      value="event"
-                      checked={dataType === "event"}
-                      onChange={() => setDataType("event")}
-                    />
-                    <span className="ml-2 text-gray-700">Event Data</span>
-                  </label>
-                </div>
-              </div>
-
-              <ColumnMapping
-                columns={headers}
-                initialMappings={columnMappings}
-                onMappingsChange={setColumnMappings}
-                targetSystem="CleverTap"
-              />
+          <div className="mb-5">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Data Type:
+            </label>
+            <div className="flex space-x-4 mb-4">
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  className="form-radio h-4 w-4"
+                  name="dataType"
+                  value="profile"
+                  checked={dataType === "profile"}
+                  onChange={() => setDataType("profile")}
+                />
+                <span className="ml-2 text-gray-700">Profile Data</span>
+              </label>
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  className="form-radio h-4 w-4"
+                  name="dataType"
+                  value="event"
+                  checked={dataType === "event"}
+                  onChange={() => setDataType("event")}
+                />
+                <span className="ml-2 text-gray-700">Event Data</span>
+              </label>
             </div>
-          </>
-        )}
+          </div>
 
+          <ColumnMapping
+            columns={headers}
+            initialMappings={columnMappings}
+            onMappingsChange={setColumnMappings}
+            targetSystem="CleverTap"
+          />
+        </div>
+
+        {/* Action buttons */}
         <div className="mt-6 flex justify-between">
           <button
             onClick={() => setCurrentStep(2)}
@@ -880,13 +793,12 @@ function SftpGenerator() {
           >
             <i className="fas fa-arrow-left mr-2"></i>Back
           </button>
+
+          {/* Always enable the Generate Files button as long as email is provided */}
           <button
             onClick={handleGenerateFiles}
-            className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium"
-            disabled={
-              (validationResults && validationResults.validationErrors) ||
-              !clientEmail.trim()
-            }
+            className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!clientEmail.trim()}
           >
             Generate Files<i className="fas fa-arrow-right ml-2"></i>
           </button>
@@ -1303,140 +1215,310 @@ function SftpGenerator() {
           {/* Step 2: Identity Mapping */}
           {currentStep === 2 && (
             <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
-              <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
-                <i className="fas fa-fingerprint text-black mr-3"></i>Map
-                Identity Fields
-              </h2>
+              {!validationResults ? (
+                // Initial identity mapping form (shown before validation)
+                <>
+                  <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
+                    <i className="fas fa-fingerprint text-black mr-3"></i>Map
+                    Identity Fields
+                  </h2>
 
-              <div className="w-full h-px bg-gray-200 mb-6"></div>
+                  <div className="w-full h-px bg-gray-200 mb-6"></div>
 
-              <p className="text-gray-500 mb-6">
-                Please select which columns in your CSV file contain identity
-                information. Identity column is required for validation.
-              </p>
+                  <p className="text-gray-500 mb-6">
+                    Please select which columns in your CSV file contain
+                    identity information. Identity column is required for
+                    validation.
+                  </p>
 
-              <div className="space-y-6">
-                <div>
-                  <label
-                    htmlFor="identityColumn"
-                    className="block text-sm font-medium text-gray-600 mb-2"
-                  >
-                    <span className="text-red-500">*</span> Identity Column:
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                      <i className="fas fa-id-card text-gray-400"></i>
+                  <div className="space-y-6">
+                    <div>
+                      <label
+                        htmlFor="identityColumn"
+                        className="block text-sm font-medium text-gray-600 mb-2"
+                      >
+                        <span className="text-red-500">*</span> Identity Column:
+                      </label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                          <i className="fas fa-id-card text-gray-400"></i>
+                        </div>
+                        <select
+                          id="identityColumn"
+                          value={identityColumn}
+                          onChange={(e) => setIdentityColumn(e.target.value)}
+                          required
+                          className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
+                        >
+                          <option value="" disabled>
+                            Select Identity Column
+                          </option>
+                          {headers.map((header, index) => (
+                            <option key={index} value={header}>
+                              {header}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                          <i className="fas fa-chevron-down text-gray-400"></i>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-sm text-gray-500">
+                        This column uniquely identifies each user (required)
+                      </p>
                     </div>
-                    <select
-                      id="identityColumn"
-                      value={identityColumn}
-                      onChange={(e) => setIdentityColumn(e.target.value)}
-                      required
-                      className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
-                    >
-                      <option value="" disabled>
-                        Select Identity Column
-                      </option>
-                      {headers.map((header, index) => (
-                        <option key={index} value={header}>
-                          {header}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                      <i className="fas fa-chevron-down text-gray-400"></i>
+
+                    <div>
+                      <label
+                        htmlFor="emailColumn"
+                        className="block text-sm font-medium text-gray-600 mb-2"
+                      >
+                        Email Column:
+                      </label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                          <i className="fas fa-envelope text-gray-400"></i>
+                        </div>
+                        <select
+                          id="emailColumn"
+                          value={emailColumn}
+                          onChange={(e) => setEmailColumn(e.target.value)}
+                          className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
+                        >
+                          <option value="">-- Not mapped --</option>
+                          {headers.map((header, index) => (
+                            <option key={index} value={header}>
+                              {header}
+                            </option>
+                          ))}
+                        </select>
+
+                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                          <i className="fas fa-chevron-down text-gray-400"></i>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-sm text-gray-500">
+                        Optional: Select the column containing email addresses
+                        for validation
+                      </p>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="phoneColumn"
+                        className="block text-sm font-medium text-gray-600 mb-2"
+                      >
+                        Phone Column:
+                      </label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                          <i className="fas fa-phone text-gray-400"></i>
+                        </div>
+                        <select
+                          id="phoneColumn"
+                          value={phoneColumn}
+                          onChange={(e) => setPhoneColumn(e.target.value)}
+                          className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
+                        >
+                          <option value="">-- Not mapped --</option>
+                          {headers.map((header, index) => (
+                            <option key={index} value={header}>
+                              {header}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                          <i className="fas fa-chevron-down text-gray-400"></i>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-sm text-gray-500">
+                        Optional: Select the column containing phone numbers for
+                        validation
+                      </p>
                     </div>
                   </div>
-                  <p className="mt-1 text-sm text-gray-500">
-                    This column uniquely identifies each user (required)
-                  </p>
-                </div>
 
-                <div>
-                  <label
-                    htmlFor="emailColumn"
-                    className="block text-sm font-medium text-gray-600 mb-2"
-                  >
-                    Email Column:
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                      <i className="fas fa-envelope text-gray-400"></i>
-                    </div>
-                    <select
-                      id="emailColumn"
-                      value={emailColumn}
-                      onChange={(e) => setEmailColumn(e.target.value)}
-                      className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
+                  <div className="mt-8 flex justify-between">
+                    <button
+                      onClick={() => setCurrentStep(1)}
+                      className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
                     >
-                      <option value="">-- Not mapped --</option>
-                      {headers.map((header, index) => (
-                        <option key={index} value={header}>
-                          {header}
-                        </option>
-                      ))}
-                    </select>
+                      <i className="fas fa-arrow-left mr-2"></i>Back
+                    </button>
+                    <button
+                      onClick={handleContinueToValidation}
+                      className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium"
+                      disabled={!identityColumn}
+                    >
+                      <i className="fas fa-check mr-2"></i>Validate Data
+                    </button>
+                  </div>
+                </>
+              ) : (
+                // Validation results (shown after validation)
+                <>
+                  <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
+                    <i className="fas fa-check-circle text-black mr-3"></i>
+                    Validation Results
+                  </h2>
 
-                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                      <i className="fas fa-chevron-down text-gray-400"></i>
+                  <div className="w-full h-px bg-gray-200 mb-6"></div>
+
+                  {/* Show validation results */}
+                  <div
+                    className={`mb-6 p-4 ${
+                      validationResults.validationErrors
+                        ? "bg-orange-50 text-orange-800 rounded-lg border border-orange-200"
+                        : "bg-green-50 text-green-800 rounded-lg border border-green-200"
+                    }`}
+                  >
+                    <div className="flex">
+                      <i
+                        className={`mr-2 text-xl ${
+                          validationResults.validationErrors
+                            ? "fas fa-exclamation-triangle"
+                            : "fas fa-check-circle"
+                        }`}
+                      ></i>
+                      <span className="font-medium">
+                        CSV file processed!{" "}
+                        {validationResults.validationErrors
+                          ? "There are some validation issues, but you can still proceed."
+                          : "Your data validated successfully."}
+                      </span>
+                    </div>
+                    <div className="mt-4">
+                      <span className="font-medium">Summary:</span>
+                      <ul className="list-disc pl-5 mt-2">
+                        <li>Total records: {totalRows}</li>
+                        <li>
+                          Valid records:{" "}
+                          {validationResults.validRecordCount ||
+                            (validationResults.validationErrors
+                              ? 0
+                              : totalRows)}
+                        </li>
+                        <li>Identity field: {identityColumn}</li>
+                        {emailColumn && <li>Email field: {emailColumn}</li>}
+                        {phoneColumn && <li>Phone field: {phoneColumn}</li>}
+                      </ul>
                     </div>
                   </div>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Optional: Select the column containing email addresses for
-                    validation
-                  </p>
-                </div>
 
-                <div>
-                  <label
-                    htmlFor="phoneColumn"
-                    className="block text-sm font-medium text-gray-600 mb-2"
-                  >
-                    Phone Column:
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                      <i className="fas fa-phone text-gray-400"></i>
+                  {/* Show validation errors if present */}
+                  {validationResults.validationErrors && (
+                    <div className="mb-6 p-4 bg-orange-50 text-orange-800 rounded-lg border border-orange-200">
+                      <div className="flex">
+                        <i className="fas fa-exclamation-triangle mr-2 text-xl"></i>
+                        <span className="font-medium">
+                          Validation issues found. You can still proceed to
+                          mapping.
+                        </span>
+                      </div>
+                      <div className="mt-4">
+                        <span className="font-medium">Issues:</span>
+                        <ul className="list-disc pl-5 mt-2">
+                          {validationResults.validationErrors
+                            .blankIdentityCount > 0 && (
+                            <li>
+                              {
+                                validationResults.validationErrors
+                                  .blankIdentityCount
+                              }{" "}
+                              rows have blank identity values
+                            </li>
+                          )}
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.blankIdentities > 0 && (
+                            <li>
+                              {
+                                validationResults.validationErrors
+                                  .errorBreakdown.blankIdentities
+                              }{" "}
+                              rows have blank identity values
+                            </li>
+                          )}
+                          {validationResults.validationErrors.count > 0 && (
+                            <li>
+                              {validationResults.validationErrors.count} total
+                              rows with validation issues
+                            </li>
+                          )}
+                          {validationResults.validationErrors.message && (
+                            <li>
+                              {validationResults.validationErrors.message}
+                            </li>
+                          )}
+                          {validationResults.validationErrors.otherIssues &&
+                            validationResults.validationErrors.otherIssues.map(
+                              (issue, idx) => <li key={idx}>{issue}</li>
+                            )}
+                        </ul>
+                      </div>
                     </div>
-                    <select
-                      id="phoneColumn"
-                      value={phoneColumn}
-                      onChange={(e) => setPhoneColumn(e.target.value)}
-                      className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
-                    >
-                      <option value="">-- Not mapped --</option>
-                      {headers.map((header, index) => (
-                        <option key={index} value={header}>
-                          {header}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                      <i className="fas fa-chevron-down text-gray-400"></i>
-                    </div>
+                  )}
+
+                  {/* Download buttons - only show when there are actual files to download */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    {validationResults.validationErrors &&
+                      validationResults.validationErrors.logFileUrl && (
+                        <div>
+                          <button
+                            onClick={() =>
+                              downloadFile(
+                                validationResults.validationErrors.logFileUrl,
+                                "validation_log"
+                              )
+                            }
+                            className="w-full bg-gray-400 text-white px-4 py-3 rounded-lg hover:bg-gray-500 transition-colors flex items-center justify-center font-medium"
+                          >
+                            <i className="fas fa-download mr-2"></i>Download
+                            Validation Log
+                          </button>
+                        </div>
+                      )}
+
+                    {validationResults.validEntriesUrl && (
+                      <div>
+                        <button
+                          onClick={() =>
+                            downloadFile(
+                              validationResults.validEntriesUrl,
+                              "valid_entries"
+                            )
+                          }
+                          className="w-full bg-black text-white px-4 py-3 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium"
+                        >
+                          <i className="fas fa-file-download mr-2"></i>Download
+                          Valid CSV
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Optional: Select the column containing phone numbers for
-                    validation
-                  </p>
-                </div>
-              </div>
 
-              <div className="mt-8 flex justify-between">
-                <button
-                  onClick={() => setCurrentStep(1)}
-                  className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
-                >
-                  <i className="fas fa-arrow-left mr-2"></i>Back
-                </button>
-                <button
-                  onClick={handleContinueToValidation}
-                  className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium"
-                  disabled={!identityColumn}
-                >
-                  Validate Data<i className="fas fa-arrow-right ml-2"></i>
-                </button>
-              </div>
+                  {/* Action buttons */}
+                  <div className="mt-8 flex justify-between">
+                    <div className="space-x-4">
+                      <button
+                        onClick={() => {
+                          // Reset validation results to go back to identity mapping form
+                          setValidationResults(null);
+                        }}
+                        className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
+                      >
+                        <i className="fas fa-redo mr-2"></i>Re-select Columns
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => setCurrentStep(3)}
+                      className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium"
+                    >
+                      Continue to Mapping
+                      <i className="fas fa-arrow-right ml-2"></i>
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
