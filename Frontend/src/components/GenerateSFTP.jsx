@@ -1425,34 +1425,79 @@ function SftpGenerator() {
                                 validationResults.validationErrors
                                   .blankIdentityCount
                               }{" "}
-                              rows have blank identity values
+                              rows have blank identity values.
                             </li>
                           )}
                           {validationResults.validationErrors.errorBreakdown
-                            ?.blankIdentities > 0 && (
+                            ?.quoteErrors > 0 && (
                             <li>
                               {
                                 validationResults.validationErrors
-                                  .errorBreakdown.blankIdentities
+                                  .errorBreakdown.quoteErrors
                               }{" "}
-                              rows have blank identity values
+                              fields have unescaped quote characters.
                             </li>
                           )}
-                          {validationResults.validationErrors.count > 0 && (
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.commaErrors > 0 && (
                             <li>
-                              {validationResults.validationErrors.count} total
-                              rows with validation issues
+                              {
+                                validationResults.validationErrors
+                                  .errorBreakdown.commaErrors
+                              }{" "}
+                              fields have unescaped commas.
                             </li>
                           )}
-                          {validationResults.validationErrors.message && (
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.newlineErrors > 0 && (
                             <li>
-                              {validationResults.validationErrors.message}
+                              {
+                                validationResults.validationErrors
+                                  .errorBreakdown.newlineErrors
+                              }{" "}
+                              fields have line breaks.
                             </li>
                           )}
-                          {validationResults.validationErrors.otherIssues &&
-                            validationResults.validationErrors.otherIssues.map(
-                              (issue, idx) => <li key={idx}>{issue}</li>
-                            )}
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.controlCharErrors > 0 && (
+                            <li>
+                              {
+                                validationResults.validationErrors
+                                  .errorBreakdown.controlCharErrors
+                              }{" "}
+                              fields have control characters.
+                            </li>
+                          )}
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.otherSpecialCharErrors > 0 && (
+                            <li>
+                              {
+                                validationResults.validationErrors
+                                  .errorBreakdown.otherSpecialCharErrors
+                              }{" "}
+                              fields have problematic special characters.
+                            </li>
+                          )}
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.emailErrors > 0 && (
+                            <li>
+                              {
+                                validationResults.validationErrors
+                                  .errorBreakdown.emailErrors
+                              }{" "}
+                              fields have invalid email formats.
+                            </li>
+                          )}
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.phoneErrors > 0 && (
+                            <li>
+                              {
+                                validationResults.validationErrors
+                                  .errorBreakdown.phoneErrors
+                              }{" "}
+                              fields have invalid phone formats.
+                            </li>
+                          )}
                         </ul>
                       </div>
                     </div>

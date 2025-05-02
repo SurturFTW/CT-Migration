@@ -22,7 +22,15 @@ function Footer() {
   return (
     <footer className="border-t border-gray-200 py-6 mt-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-black text-sm">
-        <p>CleverTap Migration Tool &copy; {new Date().getFullYear()}</p>
+        <p>
+          {" "}
+          Copyright &copy; 2013 WizRocket Inc. (“CleverTap”). All rights
+          reserved. |{" "}
+          <a class="text-blue-500" href="https://clevertap.com/privacy-policy/">
+            {" "}
+            Privacy Policy{" "}
+          </a>
+        </p>
       </div>
     </footer>
   );

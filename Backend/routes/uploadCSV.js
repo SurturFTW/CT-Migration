@@ -258,6 +258,7 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
               blankIdentityCount: blankIdentityCount,
             }
           : null,
+      validRecordCount: totalRows - totalInvalidEntries,
       validEntriesUrl: `/api/download/${validFileName}`,
     });
   } catch (error) {
