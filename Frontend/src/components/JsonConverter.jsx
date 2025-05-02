@@ -18,9 +18,17 @@ function JsonConverter() {
   const [downloadFilename, setDownloadFilename] = useState("");
   const [errorMessage, setErrorMessage] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
-  const [clientId] = useState(`client_${Date.now()}`); // Unique client ID for SSE
+  // const [clientId] = useState(`client_${Date.now()}`);
+
+  const [clientEmail] = useState(localStorage.getItem("email") || "");
+  const [accountName] = useState(localStorage.getItem("accountName"));
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   const eventSourceRef = useRef(null);
+
+  const toggleDropdown = () => {
+    setIsDropdownOpen((prev) => !prev);
+  };
 
   const headerRightContent = (
     <div className="flex items-center space-x-4">
@@ -30,6 +38,46 @@ function JsonConverter() {
       >
         Back to Dashboard
       </button>
+      <div className="relative">
+        <div
+          className="flex items-center space-x-2 cursor-pointer"
+          onClick={toggleDropdown}
+        >
+          <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-black font-bold">
+            {clientEmail.charAt(0).toUpperCase()}
+          </div>
+          <i className="fas fa-chevron-down text-gray-500"></i>
+        </div>
+        {isDropdownOpen && (
+          <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+            <ul className="py-2">
+              <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
+                <i className="fas fa-user mr-2 text-gray-500"></i>
+                <span className="font-medium">Account:</span> {accountName}
+              </li>
+              <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
+                <i className="fas fa-envelope mr-2 text-gray-500"></i>
+                <span className="font-medium">Email:</span> {clientEmail}
+              </li>
+              <hr className="my-2 border-gray-200" />
+
+              <li
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-black cursor-pointer"
+                onClick={() => {
+                  // Clear user data from localStorage
+                  localStorage.removeItem("accountName");
+                  localStorage.removeItem("email");
+
+                  navigate("/login");
+                }}
+              >
+                <i className="fas fa-sign-out-alt mr-2 text-gray-500"></i>
+                Sign Out
+              </li>
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 

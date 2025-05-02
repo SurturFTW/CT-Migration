@@ -12,6 +12,7 @@ function App() {
     <Router>
       <Routes>
         <Route path="/" element={<Login />} />
+        <Route path="/login" element={<Login />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/sftp-generator" element={<SftpGenerator />} />
         <Route path="/json-converter" element={<JsonConverter />} />

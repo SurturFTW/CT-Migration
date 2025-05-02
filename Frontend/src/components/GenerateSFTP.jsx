@@ -50,6 +50,7 @@ function SftpGenerator() {
 
   // Add new state for S3
   const [activeTab, setActiveTab] = useState("local");
+  const [showSecretKey, setShowSecretKey] = useState(false);
   const [s3Config, setS3Config] = useState({
     region: "",
     accessKey: "",
@@ -67,6 +68,12 @@ function SftpGenerator() {
     zip: "",
   });
 
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+
+  const toggleDropdown = () => {
+    setIsDropdownOpen((prev) => !prev);
+  };
+
   const headerRightContent = (
     <div className="flex items-center space-x-4">
       <button
@@ -75,6 +82,46 @@ function SftpGenerator() {
       >
         Back to Dashboard
       </button>
+      <div className="relative">
+        <div
+          className="flex items-center space-x-2 cursor-pointer"
+          onClick={toggleDropdown}
+        >
+          <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-black font-bold">
+            {clientEmail.charAt(0).toUpperCase()}
+          </div>
+          <i className="fas fa-chevron-down text-gray-500"></i>
+        </div>
+        {isDropdownOpen && (
+          <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+            <ul className="py-2">
+              <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
+                <i className="fas fa-user mr-2 text-gray-500"></i>
+                <span className="font-medium">Account:</span> {accountName}
+              </li>
+              <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
+                <i className="fas fa-envelope mr-2 text-gray-500"></i>
+                <span className="font-medium">Email:</span> {clientEmail}
+              </li>
+              <hr className="my-2 border-gray-200" />
+
+              <li
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-black cursor-pointer"
+                onClick={() => {
+                  // Clear user data from localStorage
+                  localStorage.removeItem("accountName");
+                  localStorage.removeItem("email");
+
+                  navigate("/login");
+                }}
+              >
+                <i className="fas fa-sign-out-alt mr-2 text-gray-500"></i>
+                Sign Out
+              </li>
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 
@@ -1003,7 +1050,7 @@ function SftpGenerator() {
                       <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                           <div>
-                            <label className="block text-sm font-medium text-gray-600 mb-2">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
                               AWS Region
                             </label>
                             <select
@@ -1014,7 +1061,7 @@ function SftpGenerator() {
                                   region: e.target.value,
                                 }))
                               }
-                              className="w-full pl-3 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all"
+                              className="w-full px-4 py-3 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-black text-base bg-white"
                             >
                               <option value="">Select Region</option>
                               <option value="us-east-1">
@@ -1078,7 +1125,7 @@ function SftpGenerator() {
                             </select>
                           </div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-600 mb-2">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
                               Access Key
                             </label>
                             <input
@@ -1090,26 +1137,40 @@ function SftpGenerator() {
                                   accessKey: e.target.value,
                                 }))
                               }
-                              className="w-full pl-3 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all"
+                              className="w-full px-4 py-3 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-black text-base bg-white"
                               placeholder="AWS Access Key"
                             />
                           </div>
                           <div className="col-span-2">
-                            <label className="block text-sm font-medium text-gray-600 mb-2">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
                               Secret Key
                             </label>
-                            <input
-                              type="password"
-                              value={s3Config.secretKey}
-                              onChange={(e) =>
-                                setS3Config((prev) => ({
-                                  ...prev,
-                                  secretKey: e.target.value,
-                                }))
-                              }
-                              className="w-full pl-3 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all"
-                              placeholder="AWS Secret Key"
-                            />
+                            <div className="relative">
+                              <input
+                                type={showSecretKey ? "text" : "password"} // Toggle between text and password
+                                value={s3Config.secretKey}
+                                onChange={(e) =>
+                                  setS3Config((prev) => ({
+                                    ...prev,
+                                    secretKey: e.target.value,
+                                  }))
+                                }
+                                className="w-full px-4 py-3 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-black text-base bg-white"
+                                placeholder="AWS Secret Key"
+                              />
+                              <div
+                                className="absolute inset-y-0 right-3 flex items-center cursor-pointer"
+                                onClick={() =>
+                                  setShowSecretKey((prev) => !prev)
+                                } // Toggle visibility
+                              >
+                                <i
+                                  className={`fas ${
+                                    showSecretKey ? "fa-eye-slash" : "fa-eye"
+                                  } text-gray-500`}
+                                ></i>
+                              </div>
+                            </div>
                           </div>
                         </div>
                         <button
@@ -1124,7 +1185,7 @@ function SftpGenerator() {
                             !s3Config.secretKey ||
                             loading
                           }
-                          className="w-full bg-black text-white py-2 px-4 rounded hover:bg-gray-800 disabled:bg-gray-400 transition-colors"
+                          className="w-full bg-black text-white py-3 px-4 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium disabled:bg-gray-400"
                         >
                           <i className="fab fa-aws mr-2"></i>Connect to AWS
                         </button>
@@ -1133,13 +1194,13 @@ function SftpGenerator() {
                       // S3 File Browser
                       <div className="space-y-4">
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
                             Select Bucket
                           </label>
                           <select
                             value={s3Config.bucket}
                             onChange={(e) => handleBucketSelect(e.target.value)}
-                            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-black"
+                            className="w-full px-4 py-3 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-black text-base bg-white"
                           >
                             <option value="">Select Bucket</option>
                             {buckets.map((bucket) => (
@@ -1152,7 +1213,7 @@ function SftpGenerator() {
 
                         {s3Config.bucket && files.length > 0 && (
                           <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
                               Select File
                             </label>
                             <select
@@ -1163,7 +1224,7 @@ function SftpGenerator() {
                                   filePath: e.target.value,
                                 }))
                               }
-                              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-black"
+                              className="w-full px-4 py-3 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-black text-base bg-white"
                             >
                               <option value="">Select File</option>
                               {files.map((file) => (
@@ -1190,7 +1251,7 @@ function SftpGenerator() {
                               setBuckets([]);
                               setFiles([]);
                             }}
-                            className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                            className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
                           >
                             <i className="fas fa-redo mr-2"></i>Reset Connection
                           </button>
@@ -1198,7 +1259,7 @@ function SftpGenerator() {
                           <button
                             onClick={handleS3FileSelect}
                             disabled={!s3Config.filePath || loading}
-                            className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 disabled:bg-gray-400 transition-colors"
+                            className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium disabled:bg-gray-400"
                           >
                             <i className="fas fa-cloud-download-alt mr-2"></i>
                             Process Selected File
