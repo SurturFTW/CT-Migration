@@ -11,7 +11,6 @@ const api = axios.create({
 });
 
 // JSON Converter API calls
-// JSON Converter API calls
 export const convertJsonToCsv = async (formData) => {
   try {
     // Changed from "/json_converter" to "/convert"
@@ -43,19 +42,34 @@ export const uploadCSV = async (formData, onUploadProgress) => {
   }
 };
 
-export const validateCSVData = async (formData, onUploadProgress) => {
+// Validate CSV data
+export const validateCSVMapping = async (formData, progressCallback) => {
   try {
-    const response = await api.post("/validate_csv", formData, {
-      headers: {
-        "Content-Type": "multipart/form-data",
-      },
-      onUploadProgress: onUploadProgress,
-      timeout: 3600000, // 1 hour
-    });
+    const response = await axios.post(
+      `${
+        process.env.REACT_APP_API_URL || "http://localhost:5000"
+      }/api/validate_csv`,
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+        onUploadProgress: progressCallback,
+      }
+    );
+
     return response.data;
   } catch (error) {
-    console.error("Validation API error:", error);
-    throw error.response?.data || error;
+    console.error("Validation error:", error);
+
+    // Extract error message from response if available
+    const errorMessage =
+      error.response?.data?.message ||
+      error.response?.data?.error ||
+      error.message ||
+      "Error validating CSV";
+
+    throw new Error(errorMessage);
   }
 };
 
@@ -64,6 +78,58 @@ export const generateFiles = async (payload) => {
     const response = await api.post("/generate_manifest", payload, {
       timeout: 3600000, // 1 hour for large file processing
     });
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || error;
+  }
+};
+
+// S3 Related API calls
+export const listS3Buckets = async (credentials) => {
+  try {
+    const response = await api.post("/list-s3-buckets", {
+      region: credentials.region,
+      accessKey: credentials.accessKey,
+      secretKey: credentials.secretKey,
+    });
+
+    if (response.data && response.data.buckets) {
+      return {
+        success: true,
+        buckets: response.data.buckets,
+      };
+    } else {
+      throw new Error("Invalid response format from S3");
+    }
+  } catch (error) {
+    console.error("S3 Error:", error);
+    throw error.response?.data || error;
+  }
+};
+
+export const listS3Files = async (s3Config) => {
+  try {
+    const response = await api.post("/list-s3-files", s3Config);
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || error;
+  }
+};
+
+export const fetchFromS3 = async (s3Config) => {
+  try {
+    const response = await api.post("/fetch-from-s3", s3Config, {
+      timeout: 3600000, // 1 hour timeout for large files
+    });
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || error;
+  }
+};
+
+export const cleanupS3File = async (filepath) => {
+  try {
+    const response = await api.post("/cleanup", { filepath });
     return response.data;
   } catch (error) {
     throw error.response?.data || error;

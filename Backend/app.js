@@ -51,6 +51,7 @@ app.use("/api", require("./routes/download"));
 app.use("/api", require("./routes/uploadCSV"));
 app.use("/api", require("./routes/uploadEvent"));
 app.use("/api", require("./routes/json-converter"));
+app.use("/api", require("./routes/handleS3"));
 
 // Global error handling middleware
 app.use((err, req, res, next) => {
