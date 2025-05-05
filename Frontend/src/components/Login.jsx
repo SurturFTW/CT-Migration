@@ -112,7 +112,7 @@ function Login() {
 
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-black text-sm">
             <p>
-              Need additional support? Visit our
+              Need additional support? Visit our{" "}
               <a
                 className="text-blue-500"
                 href="https://help.clevertap.com/hc/en-us"

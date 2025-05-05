@@ -20,11 +20,12 @@ fs.mkdirSync(OUTPUT_FOLDER, { recursive: true });
 
 app.use(
   cors({
-    origin: FRONTEND_URL,
+    origin: process.env.FRONTEND_URL,
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
 app.use(express.json());
 
 // Serve static files from the "public" folder
