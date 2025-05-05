@@ -5,6 +5,8 @@ import { convertJsonToCsv } from "../services/api";
 import Header from "./common/Header";
 import Footer from "./common/Footer";
 import FileUploader from "./common/FileUploader";
+import Dropdown from "./common/Dropdown";
+import AlertMessage from "./common/AlertMessage";
 
 function JsonConverter() {
   const navigate = useNavigate();
@@ -22,13 +24,8 @@ function JsonConverter() {
 
   const [clientEmail] = useState(localStorage.getItem("email") || "");
   const [accountName] = useState(localStorage.getItem("accountName"));
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   const eventSourceRef = useRef(null);
-
-  const toggleDropdown = () => {
-    setIsDropdownOpen((prev) => !prev);
-  };
 
   const headerRightContent = (
     <div className="flex items-center space-x-4">
@@ -38,63 +35,54 @@ function JsonConverter() {
       >
         Back to Dashboard
       </button>
-      <div className="relative">
-        <div
-          className="flex items-center space-x-2 cursor-pointer"
-          onClick={toggleDropdown}
-        >
-          <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-black font-bold">
-            {clientEmail.charAt(0).toUpperCase()}
-          </div>
-          <i className="fas fa-chevron-down text-gray-500"></i>
-        </div>
-        {isDropdownOpen && (
-          <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-            <ul className="py-2">
-              <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
-                <i className="fas fa-user mr-2 text-gray-500"></i>
-                <span className="font-medium">Account:</span> {accountName}
-              </li>
-              <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
-                <i className="fas fa-envelope mr-2 text-gray-500"></i>
-                <span className="font-medium">Email:</span> {clientEmail}
-              </li>
-              <hr className="my-2 border-gray-200" />
 
-              <li
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-black cursor-pointer"
-                onClick={() => {
-                  // Clear user data from localStorage
-                  localStorage.removeItem("accountName");
-                  localStorage.removeItem("email");
-
-                  navigate("/login");
-                }}
-              >
-                <i className="fas fa-sign-out-alt mr-2 text-gray-500"></i>
-                Sign Out
-              </li>
-            </ul>
+      <Dropdown
+        trigger={
+          <div className="flex items-center space-x-2">
+            <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-black font-bold">
+              {clientEmail.charAt(0).toUpperCase()}
+            </div>
+            <i className="fas fa-chevron-down text-gray-500"></i>
           </div>
-        )}
-      </div>
+        }
+      >
+        <ul className="py-2">
+          <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
+            <i className="fas fa-user mr-2 text-gray-500"></i>
+            <span className="font-medium">Account:</span> {accountName}
+          </li>
+          <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
+            <i className="fas fa-envelope mr-2 text-gray-500"></i>
+            <span className="font-medium">Email:</span> {clientEmail}
+          </li>
+          <hr className="my-2 border-gray-200" />
+
+          <li
+            className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-black cursor-pointer"
+            onClick={() => {
+              // Clear user data from localStorage
+              localStorage.removeItem("accountName");
+              localStorage.removeItem("email");
+
+              navigate("/login");
+            }}
+          >
+            <i className="fas fa-sign-out-alt mr-2 text-gray-500"></i>
+            Sign Out
+          </li>
+        </ul>
+      </Dropdown>
     </div>
   );
 
   // Display error message
   const showError = useCallback((message) => {
     setErrorMessage(message);
-    setTimeout(() => {
-      setErrorMessage(null);
-    }, 8000);
   }, []);
 
   // Display success message
   const showSuccessMessage = useCallback((message) => {
     setSuccessMessage(message);
-    setTimeout(() => {
-      setSuccessMessage(null);
-    }, 5000);
   }, []);
 
   // Handle file selection from the FileUploader component
@@ -105,10 +93,13 @@ function JsonConverter() {
 
   // Connect to SSE for progress updates
   useEffect(() => {
+    // Store the current ref value in a variable inside the effect
+    const eventSource = eventSourceRef.current;
+
     // Clean up event source on unmount
     return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
+      if (eventSource) {
+        eventSource.close();
       }
     };
   }, []);
@@ -213,27 +204,23 @@ function JsonConverter() {
               File
             </h2>
 
-            {/* Error or Success Messages */}
+            {/* Replace the custom error and success messages with AlertMessage component */}
             {errorMessage && (
-              <div className="bg-gray-100 border-l-4 border-black text-gray-700 p-4 mb-4 rounded">
-                <div className="flex items-center">
-                  <div className="text-lg mr-2">
-                    <i className="fas fa-exclamation-circle"></i>
-                  </div>
-                  <p>{errorMessage}</p>
-                </div>
-              </div>
+              <AlertMessage
+                type="error"
+                message={errorMessage}
+                autoHideDuration={8000}
+                onClose={() => setErrorMessage(null)}
+              />
             )}
 
             {successMessage && (
-              <div className="bg-gray-100 border-l-4 border-black text-gray-700 p-4 mb-4 rounded">
-                <div className="flex items-center">
-                  <div className="text-lg mr-2">
-                    <i className="fas fa-check-circle"></i>
-                  </div>
-                  <p>{successMessage}</p>
-                </div>
-              </div>
+              <AlertMessage
+                type="success"
+                message={successMessage}
+                autoHideDuration={5000}
+                onClose={() => setSuccessMessage(null)}
+              />
             )}
 
             <div className="space-y-6">
