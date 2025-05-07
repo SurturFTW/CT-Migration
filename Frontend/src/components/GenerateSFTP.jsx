@@ -437,6 +437,9 @@ function SftpGenerator() {
       // Set validation results
       setValidationResults(responseData);
 
+      // Add debug logging
+      console.log("Full validation results:", responseData);
+
       // Create initial column mappings
       if (headers && headers.length > 0) {
         const initialMappings = headers.map((column) => ({
@@ -739,7 +742,6 @@ function SftpGenerator() {
   };
 
   // Render validation step
-  // Render mapping step (formerly validation step)
   const renderValidationStep = () => {
     return (
       <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
@@ -1478,89 +1480,148 @@ function SftpGenerator() {
                           mapping.
                         </span>
                       </div>
+
                       <div className="mt-4">
-                        <span className="font-medium">Issues:</span>
-                        <ul className="list-disc pl-5 mt-2">
+                        {/* Identity & Contact Information Issues */}
+                        <h4 className="font-medium text-red-800 mt-3 mb-1 border-l-4 border-red-400 pl-2">
+                          Identity & Contact Information Issues
+                        </h4>
+                        <ul className="list-disc pl-5 mb-4">
                           {validationResults.validationErrors
                             .blankIdentityCount > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .blankIdentityCount
-                              }{" "}
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .blankIdentityCount
+                                }
+                              </span>{" "}
                               rows have blank identity values.
                             </li>
                           )}
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.quoteErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.quoteErrors
-                              }{" "}
-                              fields have unescaped quote characters.
-                            </li>
-                          )}
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.commaErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.commaErrors
-                              }{" "}
-                              fields have unescaped commas.
-                            </li>
-                          )}
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.newlineErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.newlineErrors
-                              }{" "}
-                              fields have line breaks.
-                            </li>
-                          )}
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.controlCharErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.controlCharErrors
-                              }{" "}
-                              fields have control characters.
-                            </li>
-                          )}
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.otherSpecialCharErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.otherSpecialCharErrors
-                              }{" "}
-                              fields have problematic special characters.
-                            </li>
-                          )}
+
                           {validationResults.validationErrors.errorBreakdown
                             ?.emailErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.emailErrors
-                              }{" "}
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.emailErrors
+                                }
+                              </span>{" "}
                               fields have invalid email formats.
                             </li>
                           )}
+
                           {validationResults.validationErrors.errorBreakdown
                             ?.phoneErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.phoneErrors
-                              }{" "}
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.phoneErrors
+                                }
+                              </span>{" "}
                               fields have invalid phone formats.
                             </li>
                           )}
+
+                          {validationResults.validationErrors
+                            .blankIdentityCount === 0 &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.emailErrors &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.phoneErrors && (
+                              <li className="text-green-700">
+                                No identity or contact information issues found.
+                              </li>
+                            )}
+                        </ul>
+
+                        {/* CSV Format Issues */}
+                        <h4 className="font-medium text-red-800 mt-3 mb-1 border-l-4 border-red-400 pl-2">
+                          CSV Format Issues
+                        </h4>
+                        <ul className="list-disc pl-5">
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.quoteErrors > 0 && (
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.quoteErrors
+                                }
+                              </span>{" "}
+                              fields have unescaped quote characters.
+                            </li>
+                          )}
+
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.commaErrors > 0 && (
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.commaErrors
+                                }
+                              </span>{" "}
+                              fields have unescaped commas.
+                            </li>
+                          )}
+
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.newlineErrors > 0 && (
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.newlineErrors
+                                }
+                              </span>{" "}
+                              fields have line breaks.
+                            </li>
+                          )}
+
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.controlCharErrors > 0 && (
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.controlCharErrors
+                                }
+                              </span>{" "}
+                              fields have control characters.
+                            </li>
+                          )}
+
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.otherSpecialCharErrors > 0 && (
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.otherSpecialCharErrors
+                                }
+                              </span>{" "}
+                              fields have problematic special characters.
+                            </li>
+                          )}
+
+                          {!validationResults.validationErrors.errorBreakdown
+                            ?.quoteErrors &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.commaErrors &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.newlineErrors &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.controlCharErrors &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.otherSpecialCharErrors && (
+                              <li className="text-green-700">
+                                No CSV format issues found.
+                              </li>
+                            )}
                         </ul>
                       </div>
                     </div>
