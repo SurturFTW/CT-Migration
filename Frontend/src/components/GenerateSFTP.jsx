@@ -487,6 +487,8 @@ function SftpGenerator() {
           csv_name: mapping.originalName || mapping.csv_name || mapping.name,
           clevertap_name: mapping.clevertap_name || mapping.name,
           type: mapping.type,
+          isCustom: mapping.isCustom || false,
+          value: mapping.value || "", // Include default value for custom columns
         };
       });
 
@@ -741,6 +743,19 @@ function SftpGenerator() {
     );
   };
 
+  // Function to handle adding custom columns
+  const handleAddCustomColumn = (result) => {
+    if (!result.success) {
+      displayError(result.message);
+      return;
+    }
+
+    setSuccessMessage(result.message);
+
+    // Clear success message after a delay
+    setTimeout(() => setSuccessMessage(""), 3000);
+  };
+
   // Render validation step
   const renderValidationStep = () => {
     return (
@@ -826,6 +841,8 @@ function SftpGenerator() {
             initialMappings={columnMappings}
             onMappingsChange={setColumnMappings}
             targetSystem="CleverTap"
+            allowCustomColumns={true}
+            onAddCustomColumn={handleAddCustomColumn}
           />
         </div>
 

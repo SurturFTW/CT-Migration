@@ -64,7 +64,11 @@ router.post("/generate_manifest", async (req, res) => {
     // Create a Set of columns to keep
     const columnsToKeep = new Set(columns.map((col) => col.csv_name));
 
-    // Process the CSV file with only mapped columns
+    // Identify custom columns with default values
+    const customColumns = columns.filter((col) => col.isCustom);
+    console.log("Custom columns:", customColumns);
+
+    // Process the CSV file with mapped columns and add custom columns
     const modifiedCsvPath = path.join(folderPath, `${csvFilePrefix}.csv`);
     const readStream = fs.createReadStream(originalFilePath);
     const writeStream = fs.createWriteStream(modifiedCsvPath);
@@ -72,7 +76,7 @@ router.post("/generate_manifest", async (req, res) => {
     const parser = parse({ columns: true, cast: false });
     const stringifier = stringify({
       header: true,
-      columns: Array.from(columnsToKeep), // Only include mapped columns
+      columns: Array.from(columnsToKeep), // Include all mapped columns including custom ones
     });
 
     // Pipe the streams and perform datetime conversion
@@ -82,9 +86,12 @@ router.post("/generate_manifest", async (req, res) => {
         // Convert datetime values in each row
         const convertedRow = {};
 
-        // Only process columns that weren't removed
+        // Process original columns that are kept
         for (const [key, value] of Object.entries(row)) {
-          if (columnsToKeep.has(key)) {
+          if (
+            columnsToKeep.has(key) &&
+            !customColumns.some((col) => col.csv_name === key)
+          ) {
             // Find the corresponding clevertap_name for this column
             const colMapping = columns.find((col) => col.csv_name === key);
             const clevertapName = colMapping ? colMapping.clevertap_name : null;
@@ -93,6 +100,31 @@ router.post("/generate_manifest", async (req, res) => {
             convertedRow[key] = convertToEpoch(value, clevertapName);
           }
         }
+
+        // Add custom columns with their default values
+        customColumns.forEach((customCol) => {
+          // Apply the default value for this custom column
+          const defaultValue = customCol.value || "";
+
+          // Handle different data types for the custom value
+          let formattedValue = defaultValue;
+
+          if (customCol.type === "boolean") {
+            formattedValue =
+              defaultValue.toLowerCase() === "true" ? "true" : "false";
+          } else if (customCol.type === "integer") {
+            formattedValue = isNaN(parseInt(defaultValue))
+              ? "0"
+              : parseInt(defaultValue).toString();
+          } else if (customCol.type === "float") {
+            formattedValue = isNaN(parseFloat(defaultValue))
+              ? "0.0"
+              : parseFloat(defaultValue).toString();
+          }
+
+          convertedRow[customCol.csv_name] = formattedValue;
+        });
+
         stringifier.write(convertedRow);
       })
       .on("end", () => {

@@ -6,6 +6,7 @@ Frontend/node_modules
 
 /OldBackend
 /OldFrontend
+/OldBackup-AWS
 
 Backend/package-lock.json
 Frontend/package-lock.json
