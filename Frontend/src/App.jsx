@@ -6,6 +6,7 @@ import Login from "./components/Login";
 import Dashboard from "./components/Dashboard";
 import SftpGenerator from "./components/GenerateSFTP";
 import JsonConverter from "./components/JsonConverter";
+import ChargedEventUpload from "./components/ChargedEventUpload";
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/sftp-generator" element={<SftpGenerator />} />
         <Route path="/json-converter" element={<JsonConverter />} />
+        <Route path="/ChargedEventUpload" element={<ChargedEventUpload />} />
       </Routes>
     </Router>
   );
