@@ -272,23 +272,20 @@ function SftpGenerator() {
         throw new Error(response.error || "Failed to fetch file from S3");
       }
 
-      // Set basic file information
+      // Create File object from response
+      const blob = new Blob([response.csvContent], { type: "text/csv" });
+      const file = new File([blob], s3Config.filePath.split("/").pop(), {
+        type: "text/csv",
+      });
+
+      // Update state with file information
+      setFile(file);
       setHeaders(response.headers || []);
       setFilePath(response.filepath || "");
       setTotalRows(response.rowCount || 0);
       setSelectedFileName(s3Config.filePath.split("/").pop());
 
-      // Create File object from response
-      const formData = new FormData();
-      const file = new File(
-        [response.csvContent || ""],
-        s3Config.filePath.split("/").pop(),
-        { type: "text/csv" }
-      );
-      formData.append("file", file);
-      setFile(file);
-
-      // Auto-detect columns
+      // Auto-detect columns if headers are available
       if (response.headers && response.headers.length > 0) {
         autoDetectColumns(response.headers);
       }

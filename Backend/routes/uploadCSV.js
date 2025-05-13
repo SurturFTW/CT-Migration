@@ -34,11 +34,25 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
   const filePath = req.file.path;
   let columns = [];
   let totalRows = 0;
+  const headerMap = new Map(); // Track duplicate headers
 
   try {
     await new Promise((resolve, reject) => {
       fs.createReadStream(filePath, { encoding: "utf-8" })
-        .pipe(csv.parse({ headers: true }))
+        .pipe(
+          csv.parse({
+            headers: (headers) => {
+              // Handle duplicate headers by appending numbers
+              return headers.map((header) => {
+                if (!header) return header; // Skip empty headers
+                const count = headerMap.get(header) || 0;
+                headerMap.set(header, count + 1);
+                return count > 0 ? `${header}_${count}` : header;
+              });
+            },
+            renameHeaders: true,
+          })
+        )
         .on("headers", (headers) => {
           columns = headers;
         })
@@ -54,6 +68,9 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
       fileName: req.file.originalname,
       columns: columns,
       totalRows: totalRows,
+      hasDuplicateHeaders: Array.from(headerMap.values()).some(
+        (count) => count > 1
+      ),
     });
   } catch (error) {
     console.error("Error parsing CSV:", error);
@@ -66,19 +83,15 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
     return res.status(400).json({ error: "No file uploaded" });
   }
 
-  // Get column mappings from request
   const identityColumn = req.body.identityColumn;
   const emailColumn = req.body.emailColumn;
   const phoneColumn = req.body.phoneColumn;
 
-  // Validate that identity column is provided (required)
   if (!identityColumn) {
     return res.status(400).json({ error: "Identity column is required" });
   }
 
   const filePath = req.file.path;
-
-  // Define output file paths
   const logFileName = `validation_log_${Date.now()}.csv`;
   const validFileName = `valid_entries_${Date.now()}.csv`;
   const logFilePath = path.join(OUTPUT_FOLDER, logFileName);
@@ -87,6 +100,7 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
   let columns = [];
   let totalInvalidEntries = 0;
   let blankIdentityCount = 0;
+  const headerMap = new Map(); // Track duplicate headers
 
   // Error and conversion counters
   let errorCounts = {
@@ -116,16 +130,27 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
   try {
     await new Promise((resolve, reject) => {
       fs.createReadStream(filePath, { encoding: "utf-8" })
-        .pipe(csv.parse({ headers: true }))
+        .pipe(
+          csv.parse({
+            headers: (headers) => {
+              // Handle duplicate headers by appending numbers
+              return headers.map((header) => {
+                if (!header) return header;
+                const count = headerMap.get(header) || 0;
+                headerMap.set(header, count + 1);
+                return count > 0 ? `${header}_${count}` : header;
+              });
+            },
+            renameHeaders: true,
+          })
+        )
+
         .on("headers", (headers) => {
           columns = headers;
-
-          // Write headers explicitly to the validation log file
           logCsvStream.write(["Row Number", ...columns, "Error Description"]);
-
-          // Write headers to the valid CSV file
           validCsvStream.write(columns);
         })
+
         .on("data", (row) => {
           const errors = [];
           let rowNumber = totalInvalidEntries + 1; // Track row number

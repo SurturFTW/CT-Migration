@@ -137,34 +137,43 @@ router.post("/fetch-from-s3", async (req, res) => {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
 
+    // Create write stream to save file locally
+    const fileStream = fs.createWriteStream(localFilePath);
+    const s3Stream = s3.getObject(params).createReadStream();
+
     const headers = [];
     let rowCount = 0;
 
-    // Stream directly from S3 and process CSV
-    s3.getObject(params)
-      .createReadStream()
-      .pipe(csv())
-      .on("headers", (headerList) => {
-        headers.push(...headerList);
-      })
-      .on("data", () => {
-        rowCount++;
-      })
-      .on("end", () => {
-        res.json({
-          success: true,
-          message: "File successfully fetched from S3",
-          filepath: localFilePath,
-          filename: filename,
-          headers: headers,
-          rowCount: rowCount,
-        });
+    // Pipe S3 stream to file and process CSV simultaneously
+    s3Stream
+      .pipe(fileStream)
+      .on("finish", () => {
+        // Once file is saved, process it to get headers and row count
+        fs.createReadStream(localFilePath)
+          .pipe(csv())
+          .on("headers", (headerList) => {
+            headers.push(...headerList);
+          })
+          .on("data", () => {
+            rowCount++;
+          })
+          .on("end", () => {
+            res.json({
+              success: true,
+              message: "File successfully fetched from S3",
+              filepath: localFilePath,
+              filename: filename,
+              headers: headers,
+              rowCount: rowCount,
+              csvContent: fs.readFileSync(localFilePath, "utf-8"),
+            });
+          });
       })
       .on("error", (err) => {
-        console.error("Error processing CSV:", err);
+        console.error("Error saving file:", err);
         res.status(500).json({
           success: false,
-          error: `Error processing CSV file: ${err.message}`,
+          error: `Error saving file: ${err.message}`,
         });
       });
   } catch (error) {
