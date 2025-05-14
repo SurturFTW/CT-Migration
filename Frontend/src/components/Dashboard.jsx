@@ -151,10 +151,10 @@ function Dashboard() {
                 using our secure API integration.
               </p>
               <button
-                onClick={() => handleOptionClick("/api/upload")}
+                onClick={() => handleOptionClick("/ChargedEventUpload")}
                 className="w-full border-2 border-black text-black px-6 py-3 rounded-lg hover:bg-gray-50 transition flex items-center justify-center"
               >
-                <span className="font-medium">Access Tool</span>
+                <span className="font-medium">Start</span>
                 <svg
                   className="w-5 h-5 ml-2"
                   fill="none"

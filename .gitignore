@@ -4,8 +4,7 @@ Frontend.zip
 Backend/node_modules
 Frontend/node_modules
 
-/OldBackend
-/OldFrontend
+/OldBackup
 
 Backend/package-lock.json
 Frontend/package-lock.json
@@ -14,3 +13,4 @@ Backend/uploads
 Backend/output
 
 .DS_Store
+.gitignore

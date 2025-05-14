@@ -22,7 +22,7 @@ function Header({ rightContent }) {
             onClick={() => navigate("/dashboard")}
           />
           <h1 className="text-xl font-bold tracking-tight text-black">
-            CleverTap Migration Tool
+            CleverPort - Data Migration
           </h1>
         </div>
 

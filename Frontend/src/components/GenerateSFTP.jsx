@@ -8,6 +8,7 @@ import {
   listS3Files,
   fetchFromS3,
   validateCSVMapping,
+  downloadFile,
 } from "../services/api";
 
 import Header from "./common/Header";
@@ -272,23 +273,20 @@ function SftpGenerator() {
         throw new Error(response.error || "Failed to fetch file from S3");
       }
 
-      // Set basic file information
+      // Create File object from response
+      const blob = new Blob([response.csvContent], { type: "text/csv" });
+      const file = new File([blob], s3Config.filePath.split("/").pop(), {
+        type: "text/csv",
+      });
+
+      // Update state with file information
+      setFile(file);
       setHeaders(response.headers || []);
       setFilePath(response.filepath || "");
       setTotalRows(response.rowCount || 0);
       setSelectedFileName(s3Config.filePath.split("/").pop());
 
-      // Create File object from response
-      const formData = new FormData();
-      const file = new File(
-        [response.csvContent || ""],
-        s3Config.filePath.split("/").pop(),
-        { type: "text/csv" }
-      );
-      formData.append("file", file);
-      setFile(file);
-
-      // Auto-detect columns
+      // Auto-detect columns if headers are available
       if (response.headers && response.headers.length > 0) {
         autoDetectColumns(response.headers);
       }
@@ -437,6 +435,9 @@ function SftpGenerator() {
       // Set validation results
       setValidationResults(responseData);
 
+      // Add debug logging
+      console.log("Full validation results:", responseData);
+
       // Create initial column mappings
       if (headers && headers.length > 0) {
         const initialMappings = headers.map((column) => ({
@@ -484,6 +485,8 @@ function SftpGenerator() {
           csv_name: mapping.originalName || mapping.csv_name || mapping.name,
           clevertap_name: mapping.clevertap_name || mapping.name,
           type: mapping.type,
+          isCustom: mapping.isCustom || false,
+          value: mapping.value || "", // Include default value for custom columns
         };
       });
 
@@ -538,57 +541,32 @@ function SftpGenerator() {
     }
   };
 
-  // Function to download files
-  const downloadFile = (url, type) => {
-    try {
-      const baseUrl = process.env.REACT_APP_API_URL || "http://localhost:5000";
-      let downloadUrl;
-      let fileName;
-      const timestamp = new Date().getTime();
-
-      // Format the URL properly based on what the server expects
-      if (url.startsWith("http")) {
-        downloadUrl = url;
-      } else if (url.startsWith("/")) {
-        downloadUrl = `${baseUrl}${url}`;
-      } else {
-        downloadUrl = `${baseUrl}/api/download/${url}`;
-      }
-
-      // Set appropriate filename based on type and include timestamp
-      switch (type) {
-        case "manifest":
-          fileName = `${accountName}_manifest_${timestamp}.json`;
-          break;
-        case "csv":
-          fileName = `${accountName}_data_${timestamp}.csv`;
-          break;
-        case "zip":
-          fileName = `${accountName}_${dataType}_${timestamp}.zip`;
-          break;
-        case "validation_log":
-          fileName = `validation_log_${timestamp}.csv`;
-          break;
-        case "valid_entries":
-          fileName = `valid_entries_${timestamp}.csv`;
-          break;
-        default:
-          fileName = url.split("/").pop();
-      }
-
-      console.log("Downloading file from:", downloadUrl);
-
-      // Create a link element and trigger the download
-      const link = document.createElement("a");
-      link.href = downloadUrl;
-      link.setAttribute("download", fileName);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (error) {
-      console.error("Download error:", error);
-      setErrorMessage(`Failed to download ${type} file`);
+  // Function to handle file download
+  const handleFileDownload = (url, type) => {
+    if (!url) {
+      setErrorMessage(`Failed to download ${type} file: URL not provided`);
+      return;
     }
+
+    // Configure options for the download
+    const options = {
+      accountName,
+      dataType,
+      baseUrl: process.env.REACT_APP_API_URL || "http://localhost:5000",
+    };
+
+    downloadFile(url, type, options)
+      .then(() => {
+        // Optional: Show success message
+        setSuccessMessage(
+          `${type.charAt(0).toUpperCase() + type.slice(1)} download started`
+        );
+        setTimeout(() => setSuccessMessage(""), 3000);
+      })
+      .catch((error) => {
+        console.error(`Download error for ${type}:`, error);
+        setErrorMessage(`Failed to download ${type} file`);
+      });
   };
 
   // Reset the form to start over with all state resets
@@ -661,7 +639,7 @@ function SftpGenerator() {
                     </div>
                   </div>
                   <button
-                    onClick={() => downloadFile(links.zip, "zip")}
+                    onClick={() => handleFileDownload(links.zip, "zip")}
                     className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
                   >
                     <i className="fas fa-download mr-2"></i>Download ZIP
@@ -683,7 +661,7 @@ function SftpGenerator() {
                     </div>
                   </div>
                   <button
-                    onClick={() => downloadFile(links.manifest, "manifest")}
+                    onClick={() => handleFileDownload(links.manifest, "manifest")}
                     className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
                   >
                     <i className="fas fa-download mr-2"></i>Download JSON
@@ -705,7 +683,7 @@ function SftpGenerator() {
                     </div>
                   </div>
                   <button
-                    onClick={() => downloadFile(links.csv, "csv")}
+                    onClick={() => handleFileDownload(links.csv, "csv")}
                     className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
                   >
                     <i className="fas fa-download mr-2"></i>Download CSV
@@ -738,8 +716,20 @@ function SftpGenerator() {
     );
   };
 
+  // Function to handle adding custom columns
+  const handleAddCustomColumn = (result) => {
+    if (!result.success) {
+      displayError(result.message);
+      return;
+    }
+
+    setSuccessMessage(result.message);
+
+    // Clear success message after a delay
+    setTimeout(() => setSuccessMessage(""), 3000);
+  };
+
   // Render validation step
-  // Render mapping step (formerly validation step)
   const renderValidationStep = () => {
     return (
       <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
@@ -824,6 +814,8 @@ function SftpGenerator() {
             initialMappings={columnMappings}
             onMappingsChange={setColumnMappings}
             targetSystem="CleverTap"
+            allowCustomColumns={true}
+            onAddCustomColumn={handleAddCustomColumn}
           />
         </div>
 
@@ -1478,89 +1470,148 @@ function SftpGenerator() {
                           mapping.
                         </span>
                       </div>
+
                       <div className="mt-4">
-                        <span className="font-medium">Issues:</span>
-                        <ul className="list-disc pl-5 mt-2">
+                        {/* Identity & Contact Information Issues */}
+                        <h4 className="font-medium text-red-800 mt-3 mb-1 border-l-4 border-red-400 pl-2">
+                          Identity & Contact Information Issues
+                        </h4>
+                        <ul className="list-disc pl-5 mb-4">
                           {validationResults.validationErrors
                             .blankIdentityCount > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .blankIdentityCount
-                              }{" "}
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .blankIdentityCount
+                                }
+                              </span>{" "}
                               rows have blank identity values.
                             </li>
                           )}
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.quoteErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.quoteErrors
-                              }{" "}
-                              fields have unescaped quote characters.
-                            </li>
-                          )}
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.commaErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.commaErrors
-                              }{" "}
-                              fields have unescaped commas.
-                            </li>
-                          )}
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.newlineErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.newlineErrors
-                              }{" "}
-                              fields have line breaks.
-                            </li>
-                          )}
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.controlCharErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.controlCharErrors
-                              }{" "}
-                              fields have control characters.
-                            </li>
-                          )}
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.otherSpecialCharErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.otherSpecialCharErrors
-                              }{" "}
-                              fields have problematic special characters.
-                            </li>
-                          )}
+
                           {validationResults.validationErrors.errorBreakdown
                             ?.emailErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.emailErrors
-                              }{" "}
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.emailErrors
+                                }
+                              </span>{" "}
                               fields have invalid email formats.
                             </li>
                           )}
+
                           {validationResults.validationErrors.errorBreakdown
                             ?.phoneErrors > 0 && (
-                            <li>
-                              {
-                                validationResults.validationErrors
-                                  .errorBreakdown.phoneErrors
-                              }{" "}
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.phoneErrors
+                                }
+                              </span>{" "}
                               fields have invalid phone formats.
                             </li>
                           )}
+
+                          {validationResults.validationErrors
+                            .blankIdentityCount === 0 &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.emailErrors &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.phoneErrors && (
+                              <li className="text-green-700">
+                                No identity or contact information issues found.
+                              </li>
+                            )}
+                        </ul>
+
+                        {/* CSV Format Issues */}
+                        <h4 className="font-medium text-red-800 mt-3 mb-1 border-l-4 border-red-400 pl-2">
+                          CSV Format Issues
+                        </h4>
+                        <ul className="list-disc pl-5">
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.quoteErrors > 0 && (
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.quoteErrors
+                                }
+                              </span>{" "}
+                              fields have unescaped quote characters.
+                            </li>
+                          )}
+
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.commaErrors > 0 && (
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.commaErrors
+                                }
+                              </span>{" "}
+                              fields have unescaped commas.
+                            </li>
+                          )}
+
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.newlineErrors > 0 && (
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.newlineErrors
+                                }
+                              </span>{" "}
+                              fields have line breaks.
+                            </li>
+                          )}
+
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.controlCharErrors > 0 && (
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.controlCharErrors
+                                }
+                              </span>{" "}
+                              fields have control characters.
+                            </li>
+                          )}
+
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.otherSpecialCharErrors > 0 && (
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.otherSpecialCharErrors
+                                }
+                              </span>{" "}
+                              fields have problematic special characters.
+                            </li>
+                          )}
+
+                          {!validationResults.validationErrors.errorBreakdown
+                            ?.quoteErrors &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.commaErrors &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.newlineErrors &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.controlCharErrors &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.otherSpecialCharErrors && (
+                              <li className="text-green-700">
+                                No CSV format issues found.
+                              </li>
+                            )}
                         </ul>
                       </div>
                     </div>
@@ -1573,7 +1624,7 @@ function SftpGenerator() {
                         <div>
                           <button
                             onClick={() =>
-                              downloadFile(
+                              handleFileDownload(
                                 validationResults.validationErrors.logFileUrl,
                                 "validation_log"
                               )
@@ -1590,7 +1641,7 @@ function SftpGenerator() {
                       <div>
                         <button
                           onClick={() =>
-                            downloadFile(
+                            handleFileDownload(
                               validationResults.validEntriesUrl,
                               "valid_entries"
                             )

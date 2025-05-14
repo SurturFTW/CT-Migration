@@ -26,7 +26,10 @@ function Footer() {
           {" "}
           Copyright &copy; 2013 WizRocket Inc. (“CleverTap”). All rights
           reserved. |{" "}
-          <a class="text-blue-500" href="https://clevertap.com/privacy-policy/">
+          <a
+            className="text-blue-500"
+            href="https://clevertap.com/privacy-policy/"
+          >
             {" "}
             Privacy Policy{" "}
           </a>
