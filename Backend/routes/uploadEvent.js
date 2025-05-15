@@ -17,15 +17,19 @@ const upload = multer({ storage });
 
 router.post("/upload_event", upload.single("file"), async (req, res) => {
   try {
-    const { accountId, passcode, apiUrl, mapping, headers } = req.body;
+    const { accountId, passcode, apiUrl, mapping, itemsFields, groupByField } =
+      req.body;
     const parsedMapping = JSON.parse(mapping);
+    const parsedItemsFields = JSON.parse(itemsFields || "[]");
     const batchSizeNum = 1000;
-    const parsedHeaders = headers ? JSON.parse(headers) : null;
+    const parsedHeaders = req.body.headers
+      ? JSON.parse(req.body.headers)
+      : null;
 
     // Event name is always "Charged"
     const evtName = "Charged";
 
-    if (!accountId || !passcode || !req.file) {
+    if (!accountId || !passcode || !req.file || !groupByField) {
       return res.status(400).json({
         error: "Missing required fields",
       });
@@ -35,7 +39,7 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
     const uploadUrl = apiUrl || "https://api.clevertap.com/1/upload";
 
     let totalEvents = 0;
-    // Use a map to track events by identity+timestamp to enable merging
+    // Use a map to track events by groupByField value
     const eventsMap = new Map();
 
     // Simplify nested property assignment with this helper function
@@ -87,160 +91,94 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
       return trimmedValue;
     };
 
-    // Helper function to flatten objects while preserving special fields
-    const flattenObject = (obj, prefix = "") => {
-      let flattened = {};
-
-      for (const key in obj) {
-        if (Object.prototype.hasOwnProperty.call(obj, key)) {
-          const value = obj[key];
-          const newKey = prefix ? `${prefix}.${key}` : key;
-
-          // Skip flattening for Items array - CleverTap allows nested structure here
-          if (key === "Items") {
-            flattened[key] = value;
-            continue;
-          }
-
-          if (
-            typeof value === "object" &&
-            value !== null &&
-            !Array.isArray(value)
-          ) {
-            Object.assign(flattened, flattenObject(value, newKey));
-          } else {
-            flattened[newKey] = value;
-          }
-        }
-      }
-
-      return flattened;
-    };
-
     await new Promise((resolve, reject) => {
       fs.createReadStream(req.file.path)
         .pipe(csv.parse({ headers: true }))
         .on("data", (row) => {
-          // Handle timestamp - ensure it's a number
+          // Skip empty rows
+          if (Object.keys(row).length === 0) return;
+
+          // Find identity and timestamp from the mappings
+          let identity = null;
           let timestamp = Math.floor(Date.now() / 1000); // Default to current time
 
-          if (row.timestamp || row.ts) {
-            const timeValue = row.timestamp || row.ts;
-            // Handle both Unix timestamps and formatted dates
-            if (!isNaN(timeValue)) {
-              timestamp = Number(timeValue);
-            } else {
-              // Try to parse as date if it's not a number
-              const parsedDate = new Date(timeValue);
-              if (!isNaN(parsedDate.getTime())) {
-                timestamp = Math.floor(parsedDate.getTime() / 1000);
-              }
-            }
-          }
-
-          // Make sure we have a valid identity
-          const identity =
-            row.identity ||
-            row.email ||
-            row.FBID ||
-            row.userId ||
-            row.Identity ||
-            row.id ||
-            row.ID ||
-            `user_${Date.now()}_${totalEvents}`;
-
-          // Initialize eventData object with proper structure
-          const eventData = {};
-
-          // Process all CSV columns according to the mapping
           Object.entries(parsedMapping).forEach(([csvColumn, targetPath]) => {
-            if (csvColumn in row && row[csvColumn]) {
-              let value = row[csvColumn];
-
-              // Parse the value appropriately
-              value = parseJsonValue(value);
-
-              // Skip properties that should be at the top level of the event
-              if (["ts", "type", "identity", "evtName"].includes(targetPath)) {
-                return;
-              }
-
-              // Special handling for Items array
-              if (targetPath === "Items" || targetPath === "evtData.Items") {
-                try {
-                  // Ensure value is an array with proper format
-                  if (!Array.isArray(value)) {
-                    if (typeof value === "string") {
-                      value = JSON.parse(value);
-                      value = Array.isArray(value) ? value : [value];
-                    } else if (typeof value === "object" && value !== null) {
-                      value = [value];
-                    } else {
-                      value = [{ item: value }];
-                    }
-                  }
-
-                  // Make sure each item in Items array has the right format
-                  value = value.map((item) => {
-                    if (typeof item !== "object" || item === null) {
-                      return { item: item };
-                    }
-                    return item;
-                  });
-
-                  // Set Items in eventData
-                  eventData.Items = value;
-                } catch (e) {
-                  console.log(`Error processing Items: ${e.message}`);
-                  eventData.Items = [];
+            if (targetPath === "identity" && row[csvColumn]) {
+              identity = row[csvColumn];
+            } else if (targetPath === "ts" && row[csvColumn]) {
+              const timeValue = row[csvColumn];
+              // Handle both Unix timestamps and formatted dates
+              if (!isNaN(timeValue)) {
+                timestamp = Number(timeValue);
+              } else {
+                // Try to parse as date if it's not a number
+                const parsedDate = new Date(timeValue);
+                if (!isNaN(parsedDate.getTime())) {
+                  timestamp = Math.floor(parsedDate.getTime() / 1000);
                 }
-                return;
               }
-
-              // For regular fields, handle the target path appropriately
-              let finalPath = targetPath;
-              if (targetPath.startsWith("evtData.")) {
-                finalPath = targetPath.substring(8); // Remove "evtData." prefix
-              }
-
-              setNestedProperty(eventData, finalPath, value);
             }
           });
 
-          // Create a unique key for this event based on identity and timestamp
-          const eventKey = `${identity}_${timestamp}`;
+          // If we couldn't find an identity, generate a fallback
+          if (!identity) {
+            identity = `user_${Date.now()}_${totalEvents}`;
+          }
 
-          // If we already have an event with this identity and timestamp, merge them
-          if (eventsMap.has(eventKey)) {
-            const existingEvent = eventsMap.get(eventKey);
+          // Get the grouping value to organize related items into single transactions
+          const groupValue =
+            row[groupByField] || `group_${Date.now()}_${totalEvents}`;
 
-            // Merge the Items arrays if they exist
-            if (eventData.Items && existingEvent.evtData.Items) {
-              existingEvent.evtData.Items = [
-                ...existingEvent.evtData.Items,
-                ...eventData.Items,
-              ];
-            } else if (eventData.Items) {
-              existingEvent.evtData.Items = eventData.Items;
-            }
-
-            // Merge other properties
-            Object.entries(eventData).forEach(([key, value]) => {
-              if (key !== "Items") {
-                existingEvent.evtData[key] = value;
-              }
-            });
+          // Initialize event or get existing event by group value
+          let eventObj;
+          if (eventsMap.has(groupValue)) {
+            eventObj = eventsMap.get(groupValue);
           } else {
-            // If this is a new event, add it to the map
-            eventsMap.set(eventKey, {
+            eventObj = {
               identity: identity,
               ts: timestamp,
               type: "event",
-              evtName: evtName, // Always "Charged"
-              evtData: eventData,
+              evtName: evtName,
+              evtData: {},
+            };
+            eventsMap.set(groupValue, eventObj);
+            totalEvents++;
+          }
+
+          // Process regular properties
+          Object.entries(parsedMapping).forEach(([csvColumn, targetPath]) => {
+            if (
+              csvColumn in row &&
+              row[csvColumn] &&
+              targetPath !== "identity" &&
+              targetPath !== "ts"
+            ) {
+              let value = parseJsonValue(row[csvColumn]);
+
+              // Handle nested properties
+              if (targetPath.startsWith("evtData.")) {
+                const propertyPath = targetPath.substring(8); // Remove "evtData." prefix
+                setNestedProperty(eventObj.evtData, propertyPath, value);
+              }
+            }
+          });
+
+          // Process items fields for this row
+          if (parsedItemsFields.length > 0) {
+            const itemObj = {};
+            parsedItemsFields.forEach((field) => {
+              if (row[field.source]) {
+                itemObj[field.target] = parseJsonValue(row[field.source]);
+              }
             });
 
-            totalEvents++;
+            // Only add non-empty item objects
+            if (Object.keys(itemObj).length > 0) {
+              if (!eventObj.evtData.Items) {
+                eventObj.evtData.Items = [];
+              }
+              eventObj.evtData.Items.push(itemObj);
+            }
           }
         })
         .on("end", resolve)
@@ -319,6 +257,196 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
     if (req.file) {
       fs.unlink(req.file.path, (err) => {
         if (err) console.error("Error deleting file:", err);
+      });
+    }
+  }
+});
+
+router.post("/preview_event", upload.single("file"), async (req, res) => {
+  try {
+    const { mapping, itemsFields, groupByField } = req.body;
+    const parsedMapping = JSON.parse(mapping);
+    const parsedItemsFields = JSON.parse(itemsFields || "[]");
+
+    if (!req.file || !groupByField) {
+      return res.status(400).json({
+        error: "Missing required fields",
+      });
+    }
+
+    let totalEvents = 0;
+    // Use a map to track events by groupByField value
+    const eventsMap = new Map();
+
+    // Reuse the same helper functions from the upload route
+    const setNestedProperty = (obj, path, value) => {
+      if (!path) return;
+      const parts = path.split(".");
+      let current = obj;
+
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (!current[parts[i]]) {
+          current[parts[i]] = {};
+        }
+        current = current[parts[i]];
+      }
+
+      current[parts[parts.length - 1]] = value;
+    };
+
+    const parseJsonValue = (value) => {
+      if (typeof value !== "string") return value;
+      const trimmedValue = value.trim();
+
+      if (
+        (trimmedValue.startsWith("{") && trimmedValue.endsWith("}")) ||
+        (trimmedValue.startsWith("[") && trimmedValue.endsWith("]"))
+      ) {
+        try {
+          return JSON.parse(trimmedValue);
+        } catch (e) {
+          return trimmedValue;
+        }
+      }
+
+      if (!isNaN(trimmedValue) && trimmedValue !== "") {
+        return Number(trimmedValue);
+      }
+
+      if (trimmedValue.toLowerCase() === "true") return true;
+      if (trimmedValue.toLowerCase() === "false") return false;
+
+      return trimmedValue;
+    };
+
+    // Use a counter to limit the preview to 5 events maximum
+    let previewCount = 0;
+    const MAX_PREVIEW_EVENTS = 5;
+
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(req.file.path)
+        .pipe(csv.parse({ headers: true }))
+        .on("data", (row) => {
+          // Skip if we've reached the preview limit
+          if (previewCount >= MAX_PREVIEW_EVENTS) return;
+
+          // Skip empty rows
+          if (Object.keys(row).length === 0) return;
+
+          // Find identity and timestamp from the mappings
+          let identity = null;
+          let timestamp = Math.floor(Date.now() / 1000); // Default to current time
+
+          Object.entries(parsedMapping).forEach(([csvColumn, targetPath]) => {
+            if (targetPath === "identity" && row[csvColumn]) {
+              identity = row[csvColumn];
+            } else if (targetPath === "ts" && row[csvColumn]) {
+              const timeValue = row[csvColumn];
+              // Handle both Unix timestamps and formatted dates
+              if (!isNaN(timeValue)) {
+                timestamp = Number(timeValue);
+              } else {
+                // Try to parse as date if it's not a number
+                const parsedDate = new Date(timeValue);
+                if (!isNaN(parsedDate.getTime())) {
+                  timestamp = Math.floor(parsedDate.getTime() / 1000);
+                }
+              }
+            }
+          });
+
+          // If we couldn't find an identity, generate a fallback
+          if (!identity) {
+            identity = `user_${Date.now()}_${totalEvents}`;
+          }
+
+          // Get the grouping value to organize related items into single transactions
+          const groupValue =
+            row[groupByField] || `group_${Date.now()}_${totalEvents}`;
+
+          // Initialize event or get existing event by group value
+          let eventObj;
+          if (eventsMap.has(groupValue)) {
+            eventObj = eventsMap.get(groupValue);
+          } else {
+            if (previewCount < MAX_PREVIEW_EVENTS) {
+              eventObj = {
+                identity: identity,
+                ts: timestamp,
+                type: "event",
+                evtName: "Charged",
+                evtData: {},
+              };
+              eventsMap.set(groupValue, eventObj);
+              totalEvents++;
+              previewCount++;
+            } else {
+              return;
+            }
+          }
+
+          // Process regular properties
+          Object.entries(parsedMapping).forEach(([csvColumn, targetPath]) => {
+            if (
+              csvColumn in row &&
+              row[csvColumn] &&
+              targetPath !== "identity" &&
+              targetPath !== "ts"
+            ) {
+              let value = parseJsonValue(row[csvColumn]);
+
+              // Handle nested properties
+              if (targetPath.startsWith("evtData.")) {
+                const propertyPath = targetPath.substring(8); // Remove "evtData." prefix
+                setNestedProperty(eventObj.evtData, propertyPath, value);
+              }
+            }
+          });
+
+          // Process items fields for this row
+          if (parsedItemsFields.length > 0) {
+            const itemObj = {};
+            parsedItemsFields.forEach((field) => {
+              if (row[field.source]) {
+                itemObj[field.target] = parseJsonValue(row[field.source]);
+              }
+            });
+
+            // Only add non-empty item objects
+            if (Object.keys(itemObj).length > 0) {
+              if (!eventObj.evtData.Items) {
+                eventObj.evtData.Items = [];
+              }
+              eventObj.evtData.Items.push(itemObj);
+            }
+          }
+        })
+        .on("end", resolve)
+        .on("error", reject);
+    });
+
+    // Convert the map values to an array
+    const events = Array.from(eventsMap.values());
+
+    // Return the preview data
+    res.json({
+      totalEvents,
+      previewEvents: events,
+      totalRowsInFile:
+        totalEvents > MAX_PREVIEW_EVENTS
+          ? totalEvents
+          : "Not calculated for preview",
+    });
+  } catch (error) {
+    console.error("Preview error:", error);
+    res.status(500).json({
+      error: `Failed to generate preview: ${error.message}`,
+    });
+  } finally {
+    // Clean up the uploaded file
+    if (req.file) {
+      fs.unlink(req.file.path, (err) => {
+        if (err) console.error("Error deleting preview file:", err);
       });
     }
   }
