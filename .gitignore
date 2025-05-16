@@ -6,6 +6,8 @@ Frontend/node_modules
 
 Backend/package-lock.json
 Frontend/package-lock.json
+Frontend/src/.env
+Backend/.env
 
 Backend/uploads
 Backend/output

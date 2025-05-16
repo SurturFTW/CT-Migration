@@ -1,19 +1,22 @@
 const express = require("express");
 const multer = require("multer");
 const path = require("path");
-const fs = require("fs");
 const csv = require("fast-csv");
 const axios = require("axios");
+const AWS = require("aws-sdk");
+const { PassThrough } = require("stream");
 const router = express.Router();
 
-const storage = multer.diskStorage({
-  destination: path.join(__dirname, "../uploads"),
-  filename: (req, file, cb) => {
-    cb(null, `charged_events_${Date.now()}${path.extname(file.originalname)}`);
-  },
-});
+// Initialize S3
+const s3 = new AWS.S3();
+const UPLOAD_BUCKET = process.env.S3_UPLOAD_BUCKET;
 
-const upload = multer({ storage });
+// Configure multer to use memory storage
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+});
 
 router.post("/upload_event", upload.single("file"), async (req, res) => {
   try {
@@ -37,6 +40,21 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
 
     // Determine the API URL - use provided URL or construct the default CleverTap endpoint
     const uploadUrl = apiUrl || "https://api.clevertap.com/1/upload";
+
+    // Upload file to S3 for logging purposes
+    const fileBuffer = req.file.buffer;
+    const fileKey = `charged_events_${Date.now()}${path.extname(
+      req.file.originalname
+    )}`;
+
+    await s3
+      .upload({
+        Bucket: UPLOAD_BUCKET,
+        Key: fileKey,
+        Body: fileBuffer,
+        ContentType: req.file.mimetype || "text/csv",
+      })
+      .promise();
 
     let totalEvents = 0;
     // Use a map to track events by groupByField value
@@ -91,8 +109,12 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
       return trimmedValue;
     };
 
+    // Create a stream from the file buffer
+    const bufferStream = new PassThrough();
+    bufferStream.end(fileBuffer);
+
     await new Promise((resolve, reject) => {
-      fs.createReadStream(req.file.path)
+      bufferStream
         .pipe(csv.parse({ headers: true }))
         .on("data", (row) => {
           // Skip empty rows
@@ -252,13 +274,6 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
       error: `Failed to process events: ${error.message}`,
       stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
     });
-  } finally {
-    // Clean up the uploaded file
-    if (req.file) {
-      fs.unlink(req.file.path, (err) => {
-        if (err) console.error("Error deleting file:", err);
-      });
-    }
   }
 });
 
@@ -273,6 +288,9 @@ router.post("/preview_event", upload.single("file"), async (req, res) => {
         error: "Missing required fields",
       });
     }
+
+    // For preview, we don't need to upload to S3, just process from memory
+    const fileBuffer = req.file.buffer;
 
     let totalEvents = 0;
     // Use a map to track events by groupByField value
@@ -323,8 +341,12 @@ router.post("/preview_event", upload.single("file"), async (req, res) => {
     let previewCount = 0;
     const MAX_PREVIEW_EVENTS = 5;
 
+    // Create a stream from the file buffer for processing
+    const bufferStream = new PassThrough();
+    bufferStream.end(fileBuffer);
+
     await new Promise((resolve, reject) => {
-      fs.createReadStream(req.file.path)
+      bufferStream
         .pipe(csv.parse({ headers: true }))
         .on("data", (row) => {
           // Skip if we've reached the preview limit
@@ -442,13 +464,6 @@ router.post("/preview_event", upload.single("file"), async (req, res) => {
     res.status(500).json({
       error: `Failed to generate preview: ${error.message}`,
     });
-  } finally {
-    // Clean up the uploaded file
-    if (req.file) {
-      fs.unlink(req.file.path, (err) => {
-        if (err) console.error("Error deleting preview file:", err);
-      });
-    }
   }
 });
 

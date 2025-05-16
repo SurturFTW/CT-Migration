@@ -1,36 +1,21 @@
 const express = require("express");
 const multer = require("multer");
-const fs = require("fs");
-const path = require("path");
 const { Transform } = require("stream");
 const { createObjectCsvWriter } = require("csv-writer");
 const readline = require("readline");
+const AWS = require("aws-sdk");
+const { PassThrough } = require("stream");
+const path = require("path");
 
 const router = express.Router();
 
-// Create uploads and downloads directories if they don't exist
-const UPLOAD_FOLDER = path.join(__dirname, "../uploads");
-const OUTPUT_FOLDER = path.join(__dirname, "../output");
+// Initialize S3
+const s3 = new AWS.S3();
+const UPLOAD_BUCKET = process.env.S3_UPLOAD_BUCKET;
+const OUTPUT_BUCKET = process.env.S3_OUTPUT_BUCKET;
 
-if (!fs.existsSync(UPLOAD_FOLDER)) {
-  fs.mkdirSync(UPLOAD_FOLDER, { recursive: true });
-}
-
-if (!fs.existsSync(OUTPUT_FOLDER)) {
-  fs.mkdirSync(OUTPUT_FOLDER, { recursive: true });
-}
-
-// Configure multer storage
-const storage = multer.diskStorage({
-  destination: UPLOAD_FOLDER,
-  filename: (req, file, cb) => {
-    const timestamp = Date.now();
-    const ext = path.extname(file.originalname);
-    cb(null, `json_${timestamp}${ext}`);
-  },
-});
-
-// Set up file size limits - 2GB limit
+// Configure multer to use memory storage
+const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
   limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2GB limit
@@ -91,33 +76,48 @@ router.post("/convert", upload.single("jsonFile"), async (req, res) => {
   });
 
   try {
-    const jsonFilePath = req.file.path;
-    const csvFilename = `converted_${Date.now()}.csv`;
-    const csvFilePath = path.join(OUTPUT_FOLDER, csvFilename);
+    // Upload the JSON file to S3
+    const timestamp = Date.now();
+    const fileBuffer = req.file.buffer;
+    const jsonKey = `json_${timestamp}${path.extname(req.file.originalname)}`;
+    const csvKey = `converted_${timestamp}.csv`;
 
-    // Check JSON file format safely
-    const formatInfo = await checkJsonFormat(jsonFilePath, clientId);
+    // Upload the original JSON to S3
+    await s3
+      .upload({
+        Bucket: UPLOAD_BUCKET,
+        Key: jsonKey,
+        Body: fileBuffer,
+        ContentType: "application/json",
+      })
+      .promise();
+
+    // Create a readable stream from the buffer for processing
+    const bufferStream = new PassThrough();
+    bufferStream.end(fileBuffer);
+
+    // Check JSON file format
+    const formatInfo = await checkJsonFormat(bufferStream, clientId);
+
+    // Create a new stream for actual processing
+    const processingStream = new PassThrough();
+    processingStream.end(fileBuffer);
 
     if (formatInfo.format === "single-object") {
-      await processSingleObjectSafely(jsonFilePath, csvFilePath, clientId);
+      await processSingleObjectSafely(processingStream, csvKey, clientId);
     } else if (formatInfo.format === "array") {
-      await processJsonArraySafely(jsonFilePath, csvFilePath, clientId);
+      await processJsonArraySafely(processingStream, csvKey, clientId);
     } else if (formatInfo.format === "line-delimited") {
-      await processLineDelimitedJson(jsonFilePath, csvFilePath, clientId);
+      await processLineDelimitedJson(processingStream, csvKey, clientId);
     } else {
       throw new Error("Unsupported JSON format");
     }
 
-    // Clean up the temporary JSON file
-    fs.unlink(jsonFilePath, (err) => {
-      if (err) console.error("Error removing temp file:", err);
-    });
-
     // Return success response with download URL
     res.json({
       success: true,
-      downloadUrl: `/api/download/${csvFilename}`,
-      filename: csvFilename,
+      downloadUrl: `/api/download/${csvKey}`,
+      filename: csvKey,
     });
   } catch (error) {
     console.error("Error processing file:", error);
@@ -130,7 +130,7 @@ router.post("/convert", upload.single("jsonFile"), async (req, res) => {
 });
 
 // Detect JSON format - array, single object, or line-delimited
-async function checkJsonFormat(filePath, clientId) {
+async function checkJsonFormat(bufferStream, clientId) {
   return new Promise((resolve, reject) => {
     progressMap.set(clientId, {
       progress: 5,
@@ -138,63 +138,55 @@ async function checkJsonFormat(filePath, clientId) {
     });
 
     // Read just the first few bytes to determine the starting character
-    fs.open(filePath, "r", (err, fd) => {
-      if (err) {
-        return reject(new Error("Failed to open file: " + err.message));
-      }
+    const firstChunkPromise = new Promise((resolveFirst) => {
+      bufferStream.once("readable", () => {
+        const chunk = bufferStream.read(10) || bufferStream.read();
+        resolveFirst(chunk ? chunk.toString() : "");
+      });
+    });
 
-      const buffer = Buffer.alloc(10);
-      fs.read(fd, buffer, 0, 10, 0, (err, bytesRead) => {
-        if (err) {
-          fs.close(fd, () => {});
-          return reject(new Error("Failed to read file: " + err.message));
-        }
-
-        // Close file descriptor
-        fs.close(fd, () => {});
-
-        const startChar = buffer.toString().trim()[0];
+    firstChunkPromise
+      .then(async (firstChunk) => {
+        const startChar = firstChunk.trim()[0];
 
         if (startChar === "[") {
           // Likely JSON array
           resolve({ format: "array" });
         } else if (startChar === "{") {
-          // Either single object or line-delimited - use readline to check
-          checkIfLineDelimited(filePath)
-            .then((isLineDelimited) => {
-              if (isLineDelimited) {
-                resolve({ format: "line-delimited" });
-              } else {
-                resolve({ format: "single-object" });
-              }
-            })
-            .catch((err) => reject(err));
+          // Either single object or line-delimited
+          const isLineDelimited = await checkIfLineDelimited(bufferStream);
+          if (isLineDelimited) {
+            resolve({ format: "line-delimited" });
+          } else {
+            resolve({ format: "single-object" });
+          }
         } else {
           // Check if it's line-delimited JSON by examining first few lines
-          checkIfLineDelimited(filePath)
-            .then((isLineDelimited) => {
-              if (isLineDelimited) {
-                resolve({ format: "line-delimited" });
-              } else {
-                reject(new Error("Unable to detect JSON format"));
-              }
-            })
-            .catch((err) => reject(err));
+          const isLineDelimited = await checkIfLineDelimited(bufferStream);
+          if (isLineDelimited) {
+            resolve({ format: "line-delimited" });
+          } else {
+            reject(new Error("Unable to detect JSON format"));
+          }
         }
-      });
-    });
+      })
+      .catch(reject);
   });
 }
 
-// Helper function to check if file contains line-delimited JSON
-async function checkIfLineDelimited(filePath) {
+// Helper function to check if stream contains line-delimited JSON
+async function checkIfLineDelimited(bufferStream) {
+  // Create a new readable stream from the buffer content
+  const newStream = new PassThrough();
+  bufferStream.pipe(newStream);
+
   return new Promise((resolve) => {
     let lineCount = 0;
     let validJsonLines = 0;
     const maxLinesToCheck = 5;
 
     const rl = readline.createInterface({
-      input: fs.createReadStream(filePath),
+      input: newStream,
       crlfDelay: Infinity,
     });
 
@@ -222,13 +214,24 @@ async function checkIfLineDelimited(filePath) {
 }
 
 // Process a JSON array file safely using line-by-line approach
-async function processJsonArraySafely(filePath, outputPath, clientId) {
+async function processJsonArraySafely(bufferStream, csvKey, clientId) {
   return new Promise(async (resolve, reject) => {
     try {
       progressMap.set(clientId, {
         progress: 10,
         status: "Analyzing JSON array structure...",
       });
+
+      // Create CSV output stream to S3
+      const csvOutputStream = new PassThrough();
+      const uploadPromise = s3
+        .upload({
+          Bucket: OUTPUT_BUCKET,
+          Key: csvKey,
+          Body: csvOutputStream,
+          ContentType: "text/csv",
+        })
+        .promise();
 
       // Extract array contents and process them
       const headerSet = new Set();
@@ -238,9 +241,13 @@ async function processJsonArraySafely(filePath, outputPath, clientId) {
       let objectBuffer = "";
       let currentLineNumber = 0;
 
+      // Create new stream for processing
+      const newBufferStream = new PassThrough();
+      bufferStream.pipe(newBufferStream);
+
       // First pass: sample objects to get headers
       const streamReader = readline.createInterface({
-        input: fs.createReadStream(filePath),
+        input: newBufferStream,
         crlfDelay: Infinity,
       });
 
@@ -301,7 +308,10 @@ async function processJsonArraySafely(filePath, outputPath, clientId) {
         console.log(
           "Falling back to line-delimited processing for array format"
         );
-        await processLineDelimitedJson(filePath, outputPath, clientId);
+        // Create a new stream from the buffer for line-delimited processing
+        const newStream = new PassThrough();
+        bufferStream.pipe(newStream);
+        await processLineDelimitedJson(newStream, csvKey, clientId);
         resolve();
         return;
       }
@@ -309,20 +319,20 @@ async function processJsonArraySafely(filePath, outputPath, clientId) {
       // Convert headers to array
       const headers = Array.from(headerSet);
 
-      // Set up CSV writer
-      const csvWriter = createObjectCsvWriter({
-        path: outputPath,
-        header: headers.map((header) => ({ id: header, title: header })),
-        fieldDelimiter: ",",
-        recordDelimiter: "\n",
-        alwaysQuote: true,
-      });
+      // Write CSV header
+      csvOutputStream.write(
+        headers.map((header) => `"${header}"`).join(",") + "\n"
+      );
 
       // Second pass: process the full file with known headers
       progressMap.set(clientId, {
         progress: 20,
         status: "Processing array records...",
       });
+
+      // Create a new stream for the second pass
+      const secondPassStream = new PassThrough();
+      bufferStream.pipe(secondPassStream);
 
       inArray = false;
       depth = 0;
@@ -333,7 +343,7 @@ async function processJsonArraySafely(filePath, outputPath, clientId) {
       const batchSize = 1000;
 
       const fullStreamReader = readline.createInterface({
-        input: fs.createReadStream(filePath),
+        input: secondPassStream,
         crlfDelay: Infinity,
       });
 
@@ -368,15 +378,18 @@ async function processJsonArraySafely(filePath, outputPath, clientId) {
                   flatRecord[header] = getFlatValue(obj, header);
                 });
 
-                batch.push(flatRecord);
+                // Write CSV record
+                const csvLine =
+                  headers
+                    .map((header) => `"${escapeCsvValue(flatRecord[header])}"`)
+                    .join(",") + "\n";
+
+                csvOutputStream.write(csvLine);
                 objectCount++;
                 objectBuffer = "";
 
-                // Write batch if needed
-                if (batch.length >= batchSize) {
-                  await csvWriter.writeRecords(batch);
-                  batch = [];
-
+                // Update progress periodically
+                if (objectCount % 1000 === 0) {
                   const progress = Math.min(95, 20 + objectCount / 1000);
                   progressMap.set(clientId, {
                     progress,
@@ -396,10 +409,11 @@ async function processJsonArraySafely(filePath, outputPath, clientId) {
         }
       }
 
-      // Write any remaining records
-      if (batch.length > 0) {
-        await csvWriter.writeRecords(batch);
-      }
+      // End the CSV output stream
+      csvOutputStream.end();
+
+      // Wait for upload to complete
+      await uploadPromise;
 
       progressMap.set(clientId, {
         progress: 100,
@@ -413,7 +427,7 @@ async function processJsonArraySafely(filePath, outputPath, clientId) {
 }
 
 // Process a JSON file containing a single object with arrays of records
-async function processSingleObjectSafely(filePath, outputPath, clientId) {
+async function processSingleObjectSafely(bufferStream, csvKey, clientId) {
   try {
     progressMap.set(clientId, {
       progress: 10,
@@ -421,9 +435,13 @@ async function processSingleObjectSafely(filePath, outputPath, clientId) {
     });
 
     // For large files, it's better to process it as line-delimited if possible
+    // Create a new stream for scanning
+    const scanStream = new PassThrough();
+    bufferStream.pipe(scanStream);
+
     // First attempt: check if there are any array properties by scanning
     const scanner = readline.createInterface({
-      input: fs.createReadStream(filePath),
+      input: scanStream,
       crlfDelay: Infinity,
     });
 
@@ -446,17 +464,21 @@ async function processSingleObjectSafely(filePath, outputPath, clientId) {
       if (lineNumber > 20) break;
     }
 
+    // Create a new stream for processing
+    const processStream = new PassThrough();
+    bufferStream.pipe(processStream);
+
     if (arrayPropertyFound) {
       // Process with line-by-line approach focusing on the array property
       await processObjectWithArrayProperty(
-        filePath,
-        outputPath,
+        processStream,
+        csvKey,
         clientId,
         arrayPropertyName
       );
     } else {
       // If no array property found, process as regular line-delimited
-      await processLineDelimitedJson(filePath, outputPath, clientId);
+      await processLineDelimitedJson(processStream, csvKey, clientId);
     }
 
     return;
@@ -467,8 +489,8 @@ async function processSingleObjectSafely(filePath, outputPath, clientId) {
 
 // Process an object with a known array property
 async function processObjectWithArrayProperty(
-  filePath,
-  outputPath,
+  bufferStream,
+  csvKey,
   clientId,
   arrayPropertyName
 ) {
@@ -479,6 +501,17 @@ async function processObjectWithArrayProperty(
         status: `Processing array property "${arrayPropertyName}"...`,
       });
 
+      // Create CSV output stream to S3
+      const csvOutputStream = new PassThrough();
+      const uploadPromise = s3
+        .upload({
+          Bucket: OUTPUT_BUCKET,
+          Key: csvKey,
+          Body: csvOutputStream,
+          ContentType: "text/csv",
+        })
+        .promise();
+
       // Extract array items one by one
       const headerSet = new Set();
       let inArrayProperty = false;
@@ -486,12 +519,15 @@ async function processObjectWithArrayProperty(
       let arrayDepth = 0;
       let itemDepth = 0;
       let itemBuffer = "";
-      let records = [];
       let recordCount = 0;
 
       // First scan to determine headers from sample items
+      // Create a new stream for header extraction
+      const headerStream = new PassThrough();
+      bufferStream.pipe(headerStream);
+
       const reader = readline.createInterface({
-        input: fs.createReadStream(filePath),
+        input: headerStream,
         crlfDelay: Infinity,
       });
 
@@ -568,14 +604,10 @@ async function processObjectWithArrayProperty(
         throw new Error("Could not determine structure of array items");
       }
 
-      // Set up CSV writer
-      const csvWriter = createObjectCsvWriter({
-        path: outputPath,
-        header: headers.map((header) => ({ id: header, title: header })),
-        fieldDelimiter: ",",
-        recordDelimiter: "\n",
-        alwaysQuote: true,
-      });
+      // Write CSV header
+      csvOutputStream.write(
+        headers.map((header) => `"${header}"`).join(",") + "\n"
+      );
 
       // Second pass: process all items with known headers
       progressMap.set(clientId, {
@@ -583,16 +615,18 @@ async function processObjectWithArrayProperty(
         status: `Starting full data processing...`,
       });
 
+      // Create a new stream for the second pass
+      const processStream = new PassThrough();
+      bufferStream.pipe(processStream);
+
       inArrayProperty = false;
       inArrayItem = false;
       itemDepth = 0;
       itemBuffer = "";
       recordCount = 0;
-      let batch = [];
-      const batchSize = 1000;
 
       const fullReader = readline.createInterface({
-        input: fs.createReadStream(filePath),
+        input: processStream,
         crlfDelay: Infinity,
       });
 
@@ -641,14 +675,17 @@ async function processObjectWithArrayProperty(
                   flatRecord[header] = getFlatValue(item, header);
                 });
 
-                batch.push(flatRecord);
+                // Write CSV record
+                const csvLine =
+                  headers
+                    .map((header) => `"${escapeCsvValue(flatRecord[header])}"`)
+                    .join(",") + "\n";
+
+                csvOutputStream.write(csvLine);
                 recordCount++;
 
-                // Write batch if needed
-                if (batch.length >= batchSize) {
-                  await csvWriter.writeRecords(batch);
-                  batch = [];
-
+                // Update progress periodically
+                if (recordCount % 1000 === 0) {
                   const progress = Math.min(95, 25 + recordCount / 1000);
                   progressMap.set(clientId, {
                     progress,
@@ -672,10 +709,11 @@ async function processObjectWithArrayProperty(
         }
       }
 
-      // Write any remaining records
-      if (batch.length > 0) {
-        await csvWriter.writeRecords(batch);
-      }
+      // End the CSV output stream
+      csvOutputStream.end();
+
+      // Wait for upload to complete
+      await uploadPromise;
 
       progressMap.set(clientId, {
         progress: 100,
@@ -693,12 +731,23 @@ async function processObjectWithArrayProperty(
 }
 
 // Process line-delimited JSON (NDJSON/JSON Lines format)
-async function processLineDelimitedJson(filePath, outputPath, clientId) {
+async function processLineDelimitedJson(bufferStream, csvKey, clientId) {
   return new Promise((resolve, reject) => {
     progressMap.set(clientId, {
       progress: 10,
       status: "Processing line-delimited JSON...",
     });
+
+    // Create CSV output stream to S3
+    const csvOutputStream = new PassThrough();
+    const uploadPromise = s3
+      .upload({
+        Bucket: OUTPUT_BUCKET,
+        Key: csvKey,
+        Body: csvOutputStream,
+        ContentType: "text/csv",
+      })
+      .promise();
 
     // First pass: extract headers from the entire file
     const allHeaders = new Set();
@@ -709,8 +758,12 @@ async function processLineDelimitedJson(filePath, outputPath, clientId) {
       status: "Analyzing entire file for complete structure...",
     });
 
+    // Create a new stream for header extraction
+    const headerStream = new PassThrough();
+    bufferStream.pipe(headerStream);
+
     const headerReader = readline.createInterface({
-      input: fs.createReadStream(filePath),
+      input: headerStream,
       crlfDelay: Infinity,
     });
 
@@ -746,6 +799,7 @@ async function processLineDelimitedJson(filePath, outputPath, clientId) {
       try {
         // If no headers were found, try a different approach or fail
         if (allHeaders.size === 0) {
+          csvOutputStream.end();
           return reject(
             new Error("Could not determine structure from JSON data")
           );
@@ -758,24 +812,22 @@ async function processLineDelimitedJson(filePath, outputPath, clientId) {
           status: `Found ${headers.length} unique fields. Starting conversion of ${recordCount} records...`,
         });
 
-        // Set up CSV writer
-        const csvWriter = createObjectCsvWriter({
-          path: outputPath,
-          header: headers.map((header) => ({ id: header, title: header })),
-          fieldDelimiter: ",",
-          recordDelimiter: "\n",
-          alwaysQuote: true,
-        });
+        // Write CSV header
+        csvOutputStream.write(
+          headers.map((header) => `"${header}"`).join(",") + "\n"
+        );
 
         // Second pass: process all lines
+        // Create a new stream for processing
+        const processStream = new PassThrough();
+        bufferStream.pipe(processStream);
+
         const rl = readline.createInterface({
-          input: fs.createReadStream(filePath),
+          input: processStream,
           crlfDelay: Infinity,
         });
 
-        let records = [];
         let processedLines = 0;
-        const batchSize = 1000;
 
         for await (const line of rl) {
           const trimmedLine = line.trim();
@@ -796,14 +848,17 @@ async function processLineDelimitedJson(filePath, outputPath, clientId) {
                 flatRecord[header] = getFlatValue(record, header);
               });
 
-              records.push(flatRecord);
+              // Write CSV record
+              const csvLine =
+                headers
+                  .map((header) => `"${escapeCsvValue(flatRecord[header])}"`)
+                  .join(",") + "\n";
+
+              csvOutputStream.write(csvLine);
               processedLines++;
 
-              // Process in batches
-              if (records.length >= batchSize) {
-                await csvWriter.writeRecords(records);
-                records = [];
-
+              // Update progress periodically
+              if (processedLines % 1000 === 0) {
                 const progress =
                   30 + Math.min(65, (processedLines / recordCount) * 65);
                 progressMap.set(clientId, {
@@ -820,10 +875,11 @@ async function processLineDelimitedJson(filePath, outputPath, clientId) {
           }
         }
 
-        // Write any remaining records
-        if (records.length > 0) {
-          await csvWriter.writeRecords(records);
-        }
+        // End the CSV output stream
+        csvOutputStream.end();
+
+        // Wait for upload to complete
+        await uploadPromise;
 
         progressMap.set(clientId, {
           progress: 100,
@@ -831,6 +887,7 @@ async function processLineDelimitedJson(filePath, outputPath, clientId) {
         });
         resolve();
       } catch (error) {
+        csvOutputStream.end();
         reject(
           new Error("Failed to process line-delimited JSON: " + error.message)
         );
@@ -838,6 +895,7 @@ async function processLineDelimitedJson(filePath, outputPath, clientId) {
     });
 
     headerReader.on("error", (err) => {
+      csvOutputStream.end();
       reject(
         new Error("Error reading line-delimited JSON file: " + err.message)
       );
@@ -895,6 +953,14 @@ function getFlatValue(obj, path) {
   } else {
     return String(current);
   }
+}
+
+// Escape CSV values to prevent breaking the CSV format
+function escapeCsvValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value).replace(/"/g, '""');
 }
 
 module.exports = router;
