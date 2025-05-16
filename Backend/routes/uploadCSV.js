@@ -99,6 +99,7 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
 
   let columns = [];
   let totalInvalidEntries = 0;
+  let validRecordCount = 0;
   let blankIdentityCount = 0;
   const headerMap = new Map(); // Track duplicate headers
 
@@ -255,6 +256,7 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
           } else {
             // Write valid row to the valid entries file
             validCsvStream.write(processedRow);
+            validRecordCount++; // Count valid rows
           }
         })
         .on("end", () => {
@@ -274,6 +276,8 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
       success: true,
       fileName: req.file.originalname,
       columns: columns,
+      totalRows: totalInvalidEntries + validRecordCount,
+      validRecordCount: validRecordCount, // Add this to the response
       validationErrors:
         totalInvalidEntries > 0
           ? {

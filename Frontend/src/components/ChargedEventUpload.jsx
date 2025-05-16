@@ -956,6 +956,7 @@ function ChargedEventUpload() {
           />
         </div>
       </div>
+
       {/* Add the preview modal */}
       {showPreview && (
         <PreviewModal
@@ -963,6 +964,7 @@ function ChargedEventUpload() {
           onClose={() => setShowPreview(false)}
         />
       )}
+
       {/* Update the buttons at the bottom */}
       <div className="flex justify-end space-x-4">
         <button
