@@ -84,6 +84,71 @@ export const generateFiles = async (payload) => {
   }
 };
 
+export const downloadFile = (url, type, options = {}) => {
+  return new Promise((resolve, reject) => {
+    try {
+      if (!url) {
+        throw new Error(`No URL provided for ${type} download`);
+      }
+
+      const {
+        accountName = "",
+        dataType = "",
+        baseUrl = process.env.REACT_APP_API_URL || "http://localhost:5000",
+      } = options;
+
+      let downloadUrl;
+      let fileName;
+      const timestamp = new Date().getTime();
+
+      // Format the URL properly based on what the server expects
+      if (url.startsWith("http")) {
+        downloadUrl = url;
+      } else if (url.startsWith("/")) {
+        downloadUrl = `${baseUrl}${url}`;
+      } else {
+        downloadUrl = `${baseUrl}/api/download/${url}`;
+      }
+
+      // Set appropriate filename based on type and include timestamp
+      switch (type) {
+        case "manifest":
+          fileName = `${accountName}_manifest_${timestamp}.json`;
+          break;
+        case "csv":
+          fileName = `${accountName}_data_${timestamp}.csv`;
+          break;
+        case "zip":
+          fileName = `${accountName}_${dataType}_${timestamp}.zip`;
+          break;
+        case "validation_log":
+          fileName = `validation_log_${timestamp}.csv`;
+          break;
+        case "valid_entries":
+          fileName = `valid_entries_${timestamp}.csv`;
+          break;
+        default:
+          fileName = url.split("/").pop();
+      }
+
+      console.log("Downloading file from:", downloadUrl);
+
+      // Create a link element and trigger the download
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.setAttribute("download", fileName);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      resolve(true);
+    } catch (error) {
+      console.error("Download error:", error);
+      reject(error);
+    }
+  });
+};
+
 // S3 Related API calls
 export const listS3Buckets = async (credentials) => {
   try {

@@ -1,15 +1,18 @@
 const express = require("express");
 const path = require("path");
-const fs = require("fs");
-const archiver = require("archiver");
 const { parse, stringify } = require("csv");
+const AWS = require("aws-sdk");
+const { PassThrough } = require("stream");
+const archiver = require("archiver");
 
 const { convertToEpoch } = require("../utils/dateUtils");
 
 const router = express.Router();
 
-const UPLOAD_FOLDER = path.join(__dirname, "../uploads");
-const OUTPUT_FOLDER = path.join(__dirname, "../output");
+// Initialize S3
+const s3 = new AWS.S3();
+const UPLOAD_BUCKET = process.env.S3_UPLOAD_BUCKET;
+const OUTPUT_BUCKET = process.env.S3_OUTPUT_BUCKET;
 
 router.post("/generate_manifest", async (req, res) => {
   try {
@@ -28,19 +31,24 @@ router.post("/generate_manifest", async (req, res) => {
     }
 
     const timestamp = Date.now();
-    const originalFilePath = path.join(UPLOAD_FOLDER, fileName);
 
-    if (!fs.existsSync(originalFilePath)) {
+    // Check if the file exists in S3
+    try {
+      await s3
+        .headObject({
+          Bucket: UPLOAD_BUCKET,
+          Key: fileName,
+        })
+        .promise();
+    } catch (error) {
       return res
         .status(400)
-        .json({ error: `Uploaded file not found: ${fileName}` });
+        .json({ error: `Uploaded file not found in S3: ${fileName}` });
     }
 
     const folderName = `${accountName.replace(/[@.]/g, "_")}_${timestamp}`;
     const csvFilePrefix =
       type === "event" ? `event_${timestamp}` : `profile_${timestamp}`;
-    const folderPath = path.join(OUTPUT_FOLDER, folderName);
-    fs.mkdirSync(folderPath, { recursive: true });
 
     // Create manifest object
     const manifest = {
@@ -58,33 +66,71 @@ router.post("/generate_manifest", async (req, res) => {
 
     // Use the same naming convention for manifest file
     const manifestFileName = `${accountName}_${timestamp}.json`;
-    const manifestPath = path.join(folderPath, manifestFileName);
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 4));
+
+    // Upload manifest directly to S3 without creating temp file
+    await s3
+      .upload({
+        Bucket: OUTPUT_BUCKET,
+        Key: `${folderName}/${manifestFileName}`,
+        Body: JSON.stringify(manifest, null, 4),
+        ContentType: "application/json",
+      })
+      .promise();
 
     // Create a Set of columns to keep
     const columnsToKeep = new Set(columns.map((col) => col.csv_name));
 
-    // Process the CSV file with only mapped columns
-    const modifiedCsvPath = path.join(folderPath, `${csvFilePrefix}.csv`);
-    const readStream = fs.createReadStream(originalFilePath);
-    const writeStream = fs.createWriteStream(modifiedCsvPath);
+    // Identify custom columns with default values
+    const customColumns = columns.filter((col) => col.isCustom);
+    console.log("Custom columns:", customColumns);
 
-    const parser = parse({ columns: true, cast: false });
+    // Process the CSV file with mapped columns and add custom columns
+    // Create a CSV output stream that will be sent directly to S3
+    const csvOutputStream = new PassThrough();
+
+    // Set up the S3 upload for the CSV
+    const csvUploadPromise = s3
+      .upload({
+        Bucket: OUTPUT_BUCKET,
+        Key: `${folderName}/${csvFilePrefix}.csv`,
+        Body: csvOutputStream,
+        ContentType: "text/csv",
+      })
+      .promise();
+
+    // Create CSV stringifier for the output
     const stringifier = stringify({
       header: true,
-      columns: Array.from(columnsToKeep), // Only include mapped columns
+      columns: Array.from(columnsToKeep), // Include all mapped columns including custom ones
     });
 
-    // Pipe the streams and perform datetime conversion
-    readStream
+    // Pipe stringifier to the output stream that goes to S3
+    stringifier.pipe(csvOutputStream);
+
+    // Get the input file from S3 and process it
+    const s3InputStream = s3
+      .getObject({
+        Bucket: UPLOAD_BUCKET,
+        Key: fileName,
+      })
+      .createReadStream();
+
+    // Parse the input CSV
+    const parser = parse({ columns: true, cast: false });
+
+    // Set up the streaming pipeline and processing
+    s3InputStream
       .pipe(parser)
       .on("data", (row) => {
         // Convert datetime values in each row
         const convertedRow = {};
 
-        // Only process columns that weren't removed
+        // Process original columns that are kept
         for (const [key, value] of Object.entries(row)) {
-          if (columnsToKeep.has(key)) {
+          if (
+            columnsToKeep.has(key) &&
+            !customColumns.some((col) => col.csv_name === key)
+          ) {
             // Find the corresponding clevertap_name for this column
             const colMapping = columns.find((col) => col.csv_name === key);
             const clevertapName = colMapping ? colMapping.clevertap_name : null;
@@ -93,52 +139,94 @@ router.post("/generate_manifest", async (req, res) => {
             convertedRow[key] = convertToEpoch(value, clevertapName);
           }
         }
+
+        // Add custom columns with their default values
+        customColumns.forEach((customCol) => {
+          // Apply the default value for this custom column
+          const defaultValue = customCol.value || "";
+
+          // Handle different data types for the custom value
+          let formattedValue = defaultValue;
+
+          if (customCol.type === "boolean") {
+            formattedValue =
+              defaultValue.toLowerCase() === "true" ? "true" : "false";
+          } else if (customCol.type === "integer") {
+            formattedValue = isNaN(parseInt(defaultValue))
+              ? "0"
+              : parseInt(defaultValue).toString();
+          } else if (customCol.type === "float") {
+            formattedValue = isNaN(parseFloat(defaultValue))
+              ? "0.0"
+              : parseFloat(defaultValue).toString();
+          }
+
+          convertedRow[customCol.csv_name] = formattedValue;
+        });
+
         stringifier.write(convertedRow);
       })
       .on("end", () => {
         stringifier.end();
+      })
+      .on("error", (err) => {
+        console.error("Error processing CSV:", err);
+        csvOutputStream.end();
       });
 
-    stringifier.pipe(writeStream);
+    // Wait for CSV upload to complete
+    await csvUploadPromise;
 
-    // Wait for CSV to finish writing before creating the ZIP
-    writeStream.on("finish", () => {
-      // console.log(`CSV file written successfully: ${modifiedCsvPath}`);
+    // Now create and upload the ZIP file directly to S3
+    const zipOutputStream = new PassThrough();
 
-      // Create ZIP file only after CSV is fully written
-      const zipPath = path.join(OUTPUT_FOLDER, `${folderName}.zip`);
-      const output = fs.createWriteStream(zipPath);
-      const archive = archiver("zip", { zlib: { level: 9 } });
+    // Set up the S3 upload for the ZIP
+    const zipUploadPromise = s3
+      .upload({
+        Bucket: OUTPUT_BUCKET,
+        Key: `${folderName}.zip`,
+        Body: zipOutputStream,
+        ContentType: "application/zip",
+      })
+      .promise();
 
-      archive.pipe(output);
+    // Create the archiver
+    const archive = archiver("zip", { zlib: { level: 9 } });
+    archive.pipe(zipOutputStream);
 
-      // Add files to archive with updated manifest name
-      archive.file(manifestPath, { name: `${folderName}/${manifestFileName}` });
-      archive.file(modifiedCsvPath, {
-        name: `${folderName}/${csvFilePrefix}.csv`,
-      });
+    // Add the manifest file to the archive
+    const manifestBuffer = Buffer.from(JSON.stringify(manifest, null, 4));
+    archive.append(manifestBuffer, {
+      name: `${folderName}/${manifestFileName}`,
+    });
 
-      // Handle archive errors
-      archive.on("error", (err) => {
-        console.error("Error creating ZIP archive:", err);
-        return res
-          .status(500)
-          .json({ error: "Error creating ZIP archive", details: err.message });
-      });
+    // Get the CSV file we just uploaded and add it to the archive
+    const csvResponse = await s3
+      .getObject({
+        Bucket: OUTPUT_BUCKET,
+        Key: `${folderName}/${csvFilePrefix}.csv`,
+      })
+      .promise();
 
-      // Finalize the archive
-      archive.finalize();
+    archive.append(csvResponse.Body, {
+      name: `${folderName}/${csvFilePrefix}.csv`,
+    });
 
-      // Wait for ZIP creation to complete before responding
-      output.on("close", () => {
-        console.log(`ZIP file created successfully: ${zipPath}`);
-        res.json({
-          // Updated manifest URL path
-          manifest_url: `/api/download/${folderName}/${manifestFileName}`,
-          csv_url: `/api/download/${folderName}/${csvFilePrefix}.csv`,
-          zip_url: `/api/download/${folderName}.zip`,
-        });
-      });
+    // Finalize the archive
+    archive.finalize();
+
+    // Wait for the ZIP upload to complete
+    await zipUploadPromise;
+
+    console.log(
+      `Manifest, CSV, and ZIP files created and uploaded successfully`
+    );
+
+    // Respond with the URLs
+    res.json({
+      manifest_url: `/api/download/${folderName}/${manifestFileName}`,
+      csv_url: `/api/download/${folderName}/${csvFilePrefix}.csv`,
+      zip_url: `/api/download/${folderName}.zip`,
     });
   } catch (error) {
     console.error("Error generating manifest:", error);

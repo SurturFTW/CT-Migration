@@ -94,9 +94,9 @@ const validateSpecialChars = (value) => {
     !(strValue.startsWith('"') && strValue.endsWith('"'))
   ) {
     issues.push("Contains special characters that should be quoted");
-  }
+  } */
 
-  return issues.length > 0 ? issues.join("; ") : null; */
+  return issues.length > 0 ? issues.join("; ") : null;
 };
 
 // Function to validate email format

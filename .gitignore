@@ -1,16 +1,16 @@
-Backend.zip
-Frontend.zip
-
 Backend/node_modules
 Frontend/node_modules
 
-/OldBackend
-/OldFrontend
+/OldBackup
+/OldBackup-AWS
 
 Backend/package-lock.json
 Frontend/package-lock.json
+Frontend/src/.env
+Backend/.env
 
 Backend/uploads
 Backend/output
 
 .DS_Store
+.gitignore

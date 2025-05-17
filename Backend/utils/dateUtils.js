@@ -15,7 +15,6 @@ const convertToEpoch = (value, columnName) => {
   }
 
   // Handle specific formats that standard Date parsing struggles with
-  // Handle DD-MM-YYYY format explicitly
   const dmyRegex = /^(\d{1,2})-(\d{1,2})-(\d{4})$/;
   if (dmyRegex.test(value)) {
     const [, day, month, year] = dmyRegex.exec(value);
@@ -89,6 +88,7 @@ const convertToEpoch = (value, columnName) => {
 
   // Comprehensive datetime regex to match various formats
   const dateTimeRegexes = [
+    /^\d{1,2}\/\d{1,2}\/\d{4}$/, // MM/DD/YYYY format (5/6/2023)
     /^\w{3}\s+\d{1,2}(?:st|nd|rd|th)?\s+\w{3,9}\s+\d{4}\s+\d{1,2}:\d{2}(?:\s*(?:am|pm))?$/i, // Sat 3rd October 2020 12:44 pm
     /^\d{2}-\d{2}-\d{4}$/, // DD-MM-YYYY /^\w{3}\s+\d{1,2}(?:st|nd|rd|th)?\s+\w{3,9}\s+\d{4}(?:\s+\d{1,2}:\d{2}(?:\s*(?:am|pm))?)?$/i, // Sat 3rd October 2020 [12:44 pm]
     /^(?:\d{1,2}|\d{2})-(?:\d{1,2}|\d{2})-\d{4}$/, // DD-MM-YYYY (more flexible)
@@ -146,6 +146,7 @@ const isLikelyDateTime = (value) => {
 
   // Check for common date/time patterns
   const dateTimeRegexes = [
+    /^\d{1,2}\/\d{1,2}\/\d{4}$/, // MM/DD/YYYY format (5/6/2023)
     /^\w{3}\s+\d{1,2}(?:st|nd|rd|th)?\s+\w{3,9}\s+\d{4}(?:\s+\d{1,2}:\d{2}(?:\s*(?:am|pm))?)?$/i, // Sat 3rd October 2020 [12:44 pm]
     /^(?:\d{1,2}|\d{2})-(?:\d{1,2}|\d{2})-\d{4}$/, // DD-MM-YYYY (more flexible)
     /^\d{1,2}\/\d{1,2}\/\d{2}$/, // DD/MM/YY or MM/DD/YY
