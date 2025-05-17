@@ -2,8 +2,7 @@ const express = require("express");
 const router = express.Router();
 const AWS = require("aws-sdk");
 const csv = require("csv-parser");
-const fs = require("fs");
-const path = require("path");
+const { PassThrough } = require("stream");
 
 // Route to list all S3 buckets
 router.post("/list-s3-buckets", async (req, res) => {
@@ -115,67 +114,96 @@ router.post("/fetch-from-s3", async (req, res) => {
       region: region,
     });
 
-    const s3 = new AWS.S3();
-    const params = {
+    // S3 client for source bucket
+    const sourceS3 = new AWS.S3();
+
+    // S3 client for our app bucket (using environment credentials)
+    const appS3 = new AWS.S3({
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      region: process.env.AWS_REGION || "us-east-1",
+    });
+
+    const sourceParams = {
       Bucket: bucket,
       Key: filePath,
     };
 
-    // Create a unique local filepath
+    // Extract filename from path
+    const filename = filePath.split("/").pop();
+
+    // Generate a unique key for our upload bucket
     const timestamp = new Date().getTime();
-    const filename = path.basename(filePath);
-    const localFilePath = path.join(
-      __dirname,
-      "..",
-      "uploads",
-      `${filename}_${timestamp}_.csv`
-    );
+    const destinationKey = `${filename}_${timestamp}.csv`;
 
-    // Ensure uploads directory exists
-    const uploadsDir = path.join(__dirname, "..", "uploads");
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
-
-    // Create write stream to save file locally
-    const fileStream = fs.createWriteStream(localFilePath);
-    const s3Stream = s3.getObject(params).createReadStream();
-
+    let csvContent = "";
     const headers = [];
     let rowCount = 0;
+    let sampleRows = [];
 
-    // Pipe S3 stream to file and process CSV simultaneously
-    s3Stream
-      .pipe(fileStream)
-      .on("finish", () => {
-        // Once file is saved, process it to get headers and row count
-        fs.createReadStream(localFilePath)
-          .pipe(csv())
-          .on("headers", (headerList) => {
-            headers.push(...headerList);
-          })
-          .on("data", () => {
-            rowCount++;
-          })
-          .on("end", () => {
+    try {
+      // Get the file from source S3
+      const s3Stream = sourceS3.getObject(sourceParams).createReadStream();
+
+      // Create a PassThrough stream to collect the file content
+      const contentCollector = new PassThrough();
+
+      s3Stream.pipe(contentCollector);
+
+      // Process the CSV to extract headers and row count
+      s3Stream
+        .pipe(csv())
+        .on("headers", (headerList) => {
+          headers.push(...headerList);
+        })
+        .on("data", (data) => {
+          rowCount++;
+          // Collect sample rows (limit to 100 for memory considerations)
+          if (sampleRows.length < 100) {
+            sampleRows.push(data);
+          }
+        })
+        .on("end", async () => {
+          try {
+            // Get the collected content
+            csvContent = await streamToString(contentCollector);
+
+            // Upload to our app's S3 bucket
+            const uploadParams = {
+              Bucket: process.env.S3_UPLOAD_BUCKET,
+              Key: destinationKey,
+              Body: csvContent,
+              ContentType: "text/csv",
+            };
+
+            await appS3.upload(uploadParams).promise();
+
+            // Return success response
             res.json({
               success: true,
-              message: "File successfully fetched from S3",
-              filepath: localFilePath,
-              filename: filename,
+              message: "File successfully fetched and stored in S3",
+              filename: destinationKey,
+              s3Key: destinationKey, // Key in our app's bucket
               headers: headers,
               rowCount: rowCount,
-              csvContent: fs.readFileSync(localFilePath, "utf-8"),
+              csvContent: csvContent,
+              sampleRows: sampleRows,
             });
-          });
-      })
-      .on("error", (err) => {
-        console.error("Error saving file:", err);
-        res.status(500).json({
-          success: false,
-          error: `Error saving file: ${err.message}`,
+          } catch (err) {
+            console.error("Error uploading to app S3 bucket:", err);
+            res.status(500).json({
+              success: false,
+              error: `Error uploading to app S3: ${err.message}`,
+            });
+          }
         });
+    } catch (err) {
+      console.error("Error fetching from source S3:", err);
+      res.status(500).json({
+        success: false,
+        error: `Error fetching from source S3: ${err.message}`,
       });
+    }
   } catch (error) {
     console.error("Error:", error);
     res.status(500).json({
@@ -184,5 +212,15 @@ router.post("/fetch-from-s3", async (req, res) => {
     });
   }
 });
+
+// Helper function to convert a stream to a string
+function streamToString(stream) {
+  const chunks = [];
+  return new Promise((resolve, reject) => {
+    stream.on("data", (chunk) => chunks.push(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+  });
+}
 
 module.exports = router;

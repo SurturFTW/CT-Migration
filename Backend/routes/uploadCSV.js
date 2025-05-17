@@ -3,6 +3,8 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const csv = require("fast-csv");
+const { PassThrough } = require("stream");
+const AWS = require("aws-sdk");
 
 const {
   validateEmail,
@@ -14,35 +16,55 @@ const { convertToEpoch } = require("../utils/dateUtils");
 
 const router = express.Router();
 
-const UPLOAD_FOLDER = path.join(__dirname, "../uploads");
-const OUTPUT_FOLDER = path.join(__dirname, "../output");
+// Initialize S3
+const s3 = new AWS.S3();
+const UPLOAD_BUCKET = process.env.S3_UPLOAD_BUCKET;
+const OUTPUT_BUCKET = process.env.S3_OUTPUT_BUCKET;
 
-const storage = multer.diskStorage({
-  destination: UPLOAD_FOLDER,
-  filename: (req, file, cb) => {
-    cb(null, file.originalname);
-  },
+// Configure multer to use memory storage instead of S3
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
 });
-
-const upload = multer({ storage });
 
 router.post("/upload_csv", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
 
-  const filePath = req.file.path;
-  let columns = [];
-  let totalRows = 0;
-  const headerMap = new Map(); // Track duplicate headers
-
   try {
+    // Get file data from multer
+    const fileBuffer = req.file.buffer;
+    const originalName = req.file.originalname;
+    // Use original filename without modification
+    const fileKey = originalName;
+
+    // Upload to S3 manually using the original filename
+    const uploadParams = {
+      Bucket: UPLOAD_BUCKET,
+      Key: fileKey,
+      Body: fileBuffer,
+      ContentType: req.file.mimetype || "text/csv",
+    };
+
+    const s3UploadResult = await s3.upload(uploadParams).promise();
+    console.log("File uploaded to S3:", s3UploadResult.Location);
+
+    // Process as usual
+    let columns = [];
+    let totalRows = 0;
+    const headerMap = new Map();
+
+    // Create a readable stream from the buffer
+    const bufferStream = new PassThrough();
+    bufferStream.end(fileBuffer);
+
     await new Promise((resolve, reject) => {
-      fs.createReadStream(filePath, { encoding: "utf-8" })
+      bufferStream
         .pipe(
           csv.parse({
             headers: (headers) => {
-              // Handle duplicate headers by appending numbers
               return headers.map((header) => {
                 if (!header) return header; // Skip empty headers
                 const count = headerMap.get(header) || 0;
@@ -65,7 +87,7 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
 
     res.json({
       success: true,
-      fileName: req.file.originalname,
+      fileName: fileKey, // Use original filename in response
       columns: columns,
       totalRows: totalRows,
       hasDuplicateHeaders: Array.from(headerMap.values()).some(
@@ -74,7 +96,7 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
     });
   } catch (error) {
     console.error("Error parsing CSV:", error);
-    res.status(500).json({ error: "Error parsing CSV file" });
+    res.status(500).json({ error: "Error parsing CSV file: " + error.message });
   }
 });
 
@@ -91,45 +113,82 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
     return res.status(400).json({ error: "Identity column is required" });
   }
 
-  const filePath = req.file.path;
-  const logFileName = `validation_log_${Date.now()}.csv`;
-  const validFileName = `valid_entries_${Date.now()}.csv`;
-  const logFilePath = path.join(OUTPUT_FOLDER, logFileName);
-  const validFilePath = path.join(OUTPUT_FOLDER, validFileName);
-
-  let columns = [];
-  let totalInvalidEntries = 0;
-  let blankIdentityCount = 0;
-  const headerMap = new Map(); // Track duplicate headers
-
-  // Error and conversion counters
-  let errorCounts = {
-    quoteErrors: 0,
-    commaErrors: 0,
-    newlineErrors: 0,
-    controlCharErrors: 0,
-    otherSpecialCharErrors: 0,
-    emailErrors: 0,
-    phoneErrors: 0,
-    datetimeConversions: 0,
-    blankIdentities: 0,
-  };
-
-  // Create write streams for the output files
-  const logStream = fs.createWriteStream(logFilePath);
-  const validStream = fs.createWriteStream(validFilePath);
-
-  // Create CSV streams for formatting
-  const logCsvStream = csv.format({ headers: true });
-  const validCsvStream = csv.format({ headers: true });
-
-  // Pipe the CSV streams to the file streams
-  logCsvStream.pipe(logStream);
-  validCsvStream.pipe(validStream);
-
   try {
+    // Upload file to S3 first
+    const fileBuffer = req.file.buffer;
+    const originalName = req.file.originalname;
+    // Use original filename without modification
+    const fileKey = originalName;
+
+    const uploadParams = {
+      Bucket: UPLOAD_BUCKET,
+      Key: fileKey,
+      Body: fileBuffer,
+      ContentType: req.file.mimetype || "text/csv",
+    };
+
+    await s3.upload(uploadParams).promise();
+
+    // But keep timestamps for output files to avoid overwrites
+    const logFileName = `validation_log_${originalName}`;
+    const validFileName = `valid_entries_${originalName}`;
+
+    let columns = [];
+    let totalInvalidEntries = 0;
+    let validRecordCount = 0;
+    let blankIdentityCount = 0;
+    const headerMap = new Map(); // Track duplicate headers
+
+    // Error and conversion counters
+    let errorCounts = {
+      quoteErrors: 0,
+      commaErrors: 0,
+      newlineErrors: 0,
+      controlCharErrors: 0,
+      otherSpecialCharErrors: 0,
+      emailErrors: 0,
+      phoneErrors: 0,
+      datetimeConversions: 0,
+      blankIdentities: 0,
+    };
+
+    // Create PassThrough streams for S3 uploads
+    const logStream = new PassThrough();
+    const validStream = new PassThrough();
+
+    // Set up S3 uploads
+    const logUploadPromise = s3
+      .upload({
+        Bucket: OUTPUT_BUCKET,
+        Key: logFileName,
+        Body: logStream,
+        ContentType: "text/csv",
+      })
+      .promise();
+
+    const validUploadPromise = s3
+      .upload({
+        Bucket: OUTPUT_BUCKET,
+        Key: validFileName,
+        Body: validStream,
+        ContentType: "text/csv",
+      })
+      .promise();
+
+    // Create CSV streams for formatting
+    const logCsvStream = csv.format({ headers: true });
+    const validCsvStream = csv.format({ headers: true });
+
+    // Pipe the CSV streams to the PassThrough streams
+    logCsvStream.pipe(logStream);
+    validCsvStream.pipe(validStream);
+
+    // Process the CSV data from buffer
+    const bufferStream = new PassThrough();
+    bufferStream.end(fileBuffer);
+
     await new Promise((resolve, reject) => {
-      fs.createReadStream(filePath, { encoding: "utf-8" })
+      bufferStream
         .pipe(
           csv.parse({
             headers: (headers) => {
@@ -144,13 +203,11 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
             renameHeaders: true,
           })
         )
-
         .on("headers", (headers) => {
           columns = headers;
           logCsvStream.write(["Row Number", ...columns, "Error Description"]);
           validCsvStream.write(columns);
         })
-
         .on("data", (row) => {
           const errors = [];
           let rowNumber = totalInvalidEntries + 1; // Track row number
@@ -255,6 +312,7 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
           } else {
             // Write valid row to the valid entries file
             validCsvStream.write(processedRow);
+            validRecordCount++; // Count valid rows
           }
         })
         .on("end", () => {
@@ -269,11 +327,16 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
         .on("error", reject);
     });
 
+    // Wait for S3 uploads to complete
+    await Promise.all([logUploadPromise, validUploadPromise]);
+
     // Return the response with error counts by type
     res.json({
       success: true,
-      fileName: req.file.originalname,
+      fileName: fileKey,
       columns: columns,
+      totalRows: totalInvalidEntries + validRecordCount,
+      validRecordCount: validRecordCount,
       validationErrors:
         totalInvalidEntries > 0
           ? {
@@ -308,22 +371,52 @@ router.post(
         .json({ error: "Identity column name is required" });
     }
 
-    const filePath = req.file.path;
-    const cleanFileName = `clean_data_${Date.now()}.csv`;
-    const cleanFilePath = path.join(OUTPUT_FOLDER, cleanFileName);
-
-    let columns = [];
-    let totalRows = 0;
-    let removedRows = 0;
-
-    // Create output streams
-    const cleanStream = fs.createWriteStream(cleanFilePath);
-    const cleanCsvStream = csv.format({ headers: true });
-    cleanCsvStream.pipe(cleanStream);
-
     try {
+      // Upload file to S3 first
+      const fileBuffer = req.file.buffer;
+      const originalName = req.file.originalname;
+      const fileKey = `${Date.now()}-${originalName}`;
+
+      const uploadParams = {
+        Bucket: UPLOAD_BUCKET,
+        Key: fileKey,
+        Body: fileBuffer,
+        ContentType: req.file.mimetype || "text/csv",
+      };
+
+      await s3.upload(uploadParams).promise();
+
+      const cleanFileName = `clean_data_${Date.now()}.csv`;
+
+      let columns = [];
+      let totalRows = 0;
+      let removedRows = 0;
+
+      // Create PassThrough stream for S3 upload
+      const cleanStream = new PassThrough();
+
+      // Set up S3 upload
+      const cleanUploadPromise = s3
+        .upload({
+          Bucket: OUTPUT_BUCKET,
+          Key: cleanFileName,
+          Body: cleanStream,
+          ContentType: "text/csv",
+        })
+        .promise();
+
+      // Create CSV stream for formatting
+      const cleanCsvStream = csv.format({ headers: true });
+
+      // Pipe the CSV stream to the PassThrough stream
+      cleanCsvStream.pipe(cleanStream);
+
+      // Process the CSV data from buffer
+      const bufferStream = new PassThrough();
+      bufferStream.end(fileBuffer);
+
       await new Promise((resolve, reject) => {
-        fs.createReadStream(filePath, { encoding: "utf-8" })
+        bufferStream
           .pipe(csv.parse({ headers: true }))
           .on("headers", (headers) => {
             columns = headers;
@@ -348,6 +441,9 @@ router.post(
           })
           .on("error", reject);
       });
+
+      // Wait for S3 upload to complete
+      await cleanUploadPromise;
 
       res.json({
         success: true,
