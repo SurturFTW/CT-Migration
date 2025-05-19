@@ -4,6 +4,7 @@ import Dropdown from "./common/Dropdown";
 import Loading from "./common/Loading";
 import AlertMessage from "./common/AlertMessage";
 import FileUploader from "./common/FileUploader";
+import { uploadCSV, previewEvents, uploadEvents } from "../services/api";
 
 function ChargedEventUpload() {
   const navigate = useNavigate();
@@ -65,20 +66,10 @@ function ChargedEventUpload() {
       formData.append("itemsFields", JSON.stringify(getItemsFields()));
       formData.append("groupByField", specialMappings.groupByField);
 
-      // Call the preview API
-      const response = await fetch("http://localhost:5000/api/preview_event", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setPreviewData(data);
-        setShowPreview(true);
-      } else {
-        throw new Error(data.error || "Error generating preview");
-      }
+      // Use the API service function
+      const data = await previewEvents(formData);
+      setPreviewData(data);
+      setShowPreview(true);
     } catch (error) {
       console.error("Error:", error);
       setErrorMessage(error.message || "Error generating preview");
@@ -160,32 +151,23 @@ function ChargedEventUpload() {
       const formData = new FormData();
       formData.append("file", file);
 
-      // Call API to parse CSV and get columns
-      const response = await fetch("http://localhost:5000/api/upload_csv", {
-        method: "POST",
-        body: formData,
-      });
+      // Use the API service function
+      const data = await uploadCSV(formData);
 
-      const data = await response.json();
+      // Set columns first
+      const receivedColumns = data.columns || [];
+      setColumns(receivedColumns);
 
-      if (response.ok) {
-        // Set columns first
-        const receivedColumns = data.columns || [];
-        setColumns(receivedColumns);
+      // Then immediately set the column mappings
+      const initialMappings = receivedColumns.map((column) => ({
+        csv_name: column,
+        clevertap_name: column,
+        type: "string",
+      }));
+      setColumnMappings(initialMappings);
 
-        // Then immediately set the column mappings here instead of in useEffect
-        const initialMappings = receivedColumns.map((column) => ({
-          csv_name: column,
-          clevertap_name: column,
-          type: "string",
-        }));
-        setColumnMappings(initialMappings);
-
-        // Move to next step
-        setCurrentStep(2);
-      } else {
-        throw new Error(data.error || "Error uploading file");
-      }
+      // Move to next step
+      setCurrentStep(2);
     } catch (error) {
       console.error("Error:", error);
       setErrorMessage(error.message || "Error processing the file");
@@ -234,20 +216,11 @@ function ChargedEventUpload() {
         })
       );
 
-      // Call the API to process and upload events
-      const response = await fetch("http://localhost:5000/api/upload_event", {
-        method: "POST",
-        body: formData,
-      });
+      // Use the API service function
+      await uploadEvents(formData);
 
-      const data = await response.json();
-
-      if (response.ok) {
-        setSuccessMessage("Events uploaded successfully");
-        setCurrentStep(3);
-      } else {
-        throw new Error(data.error || "Error uploading events");
-      }
+      setSuccessMessage("Events uploaded successfully");
+      setCurrentStep(3);
     } catch (error) {
       console.error("Error:", error);
       setErrorMessage(error.message || "Error processing the file");
@@ -1051,6 +1024,8 @@ function ChargedEventUpload() {
     </div>
   );
 
+  // ...existing code...
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -1103,66 +1078,70 @@ function ChargedEventUpload() {
             </div>
           </div>
 
-          {/* Progress Steps */}
-          <div className="mb-8">
-            <div className="flex items-center justify-center space-x-4">
-              {[1, 2, 3].map((step) => (
-                <div key={step} className="flex items-center">
-                  <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                      step === currentStep
-                        ? "bg-black text-white"
-                        : step < currentStep
-                        ? "bg-green-500 text-white"
-                        : "bg-gray-200 text-gray-600"
-                    }`}
-                  >
-                    {step < currentStep ? (
-                      <i className="fas fa-check"></i>
-                    ) : (
-                      step
-                    )}
-                  </div>
-                  {step < 3 && (
-                    <div
-                      className={`w-24 h-1 mx-2 ${
-                        step < currentStep ? "bg-green-500" : "bg-gray-200"
-                      }`}
-                    ></div>
-                  )}
+          {/* Show loading indicator if loading is true, otherwise show content */}
+          {loading ? (
+            <Loading />
+          ) : (
+            <>
+              {/* Progress Steps */}
+              <div className="mb-8">
+                <div className="flex items-center justify-center space-x-4">
+                  {[1, 2, 3].map((step) => (
+                    <div key={step} className="flex items-center">
+                      <div
+                        className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                          step === currentStep
+                            ? "bg-black text-white"
+                            : step < currentStep
+                            ? "bg-green-500 text-white"
+                            : "bg-gray-200 text-gray-600"
+                        }`}
+                      >
+                        {step < currentStep ? (
+                          <i className="fas fa-check"></i>
+                        ) : (
+                          step
+                        )}
+                      </div>
+                      {step < 3 && (
+                        <div
+                          className={`w-24 h-1 mx-2 ${
+                            step < currentStep ? "bg-green-500" : "bg-gray-200"
+                          }`}
+                        ></div>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div className="flex items-center justify-center space-x-20 mt-2">
-              <span className="text-sm text-gray-600">Upload File</span>
-              <span className="text-sm text-gray-600">Map Columns</span>
-              <span className="text-sm text-gray-600">Complete</span>
-            </div>
-          </div>
+                <div className="flex items-center justify-center space-x-20 mt-2">
+                  <span className="text-sm text-gray-600">Upload File</span>
+                  <span className="text-sm text-gray-600">Map Columns</span>
+                  <span className="text-sm text-gray-600">Complete</span>
+                </div>
+              </div>
 
-          {/* Error/Success Messages */}
-          {errorMessage && (
-            <AlertMessage
-              type="error"
-              message={errorMessage}
-              onClose={() => setErrorMessage("")}
-            />
+              {/* Error/Success Messages */}
+              {errorMessage && (
+                <AlertMessage
+                  type="error"
+                  message={errorMessage}
+                  onClose={() => setErrorMessage("")}
+                />
+              )}
+              {successMessage && (
+                <AlertMessage
+                  type="success"
+                  message={successMessage}
+                  onClose={() => setSuccessMessage("")}
+                />
+              )}
+
+              {/* Step Content */}
+              {currentStep === 1 && renderFileUploadStep()}
+              {currentStep === 2 && renderColumnMappingStep()}
+              {currentStep === 3 && renderSuccessStep()}
+            </>
           )}
-          {successMessage && (
-            <AlertMessage
-              type="success"
-              message={successMessage}
-              onClose={() => setSuccessMessage("")}
-            />
-          )}
-
-          {/* Loading Overlay */}
-          {loading && <Loading />}
-
-          {/* Step Content */}
-          {currentStep === 1 && renderFileUploadStep()}
-          {currentStep === 2 && renderColumnMappingStep()}
-          {currentStep === 3 && renderSuccessStep()}
         </div>
       </div>
     </div>

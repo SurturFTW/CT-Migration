@@ -201,4 +201,31 @@ export const cleanupS3File = async (filepath) => {
   }
 };
 
+// CleverTap Charged Event Upload API calls
+export const previewEvents = async (formData) => {
+  try {
+    const response = await api.post("/preview_event", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || error;
+  }
+};
+
+export const uploadEvents = async (formData) => {
+  try {
+    const response = await api.post("/upload_event", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || error;
+  }
+};
+
 export default api;

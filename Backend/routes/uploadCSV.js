@@ -21,8 +21,21 @@ const s3 = new AWS.S3();
 const UPLOAD_BUCKET = process.env.S3_UPLOAD_BUCKET;
 const OUTPUT_BUCKET = process.env.S3_OUTPUT_BUCKET;
 
-// Configure multer to use memory storage instead of S3
-const storage = multer.memoryStorage();
+// Configure multer to use disk storage for large files
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const tempDir = path.join(__dirname, "../temp");
+    // Ensure temp directory exists
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    cb(null, tempDir);
+  },
+  filename: function (req, file, cb) {
+    cb(null, `${Date.now()}-${file.originalname}`);
+  },
+});
+
 const upload = multer({
   storage: storage,
   limits: { fileSize: 5 * 1024 * 1024 * 1024 }, // 5GB limit
@@ -35,33 +48,29 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
 
   try {
     // Get file data from multer
-    const fileBuffer = req.file.buffer;
+    const filePath = req.file.path;
     const originalName = req.file.originalname;
-    // Use original filename without modification
     const fileKey = originalName;
 
-    // Upload to S3 manually using the original filename
+    // Stream file to S3 from disk
+    const fileStream = fs.createReadStream(filePath);
     const uploadParams = {
       Bucket: UPLOAD_BUCKET,
       Key: fileKey,
-      Body: fileBuffer,
+      Body: fileStream,
       ContentType: req.file.mimetype || "text/csv",
     };
 
     const s3UploadResult = await s3.upload(uploadParams).promise();
-    console.log("File uploaded to S3:", s3UploadResult.Location);
+    console.log("File uploaded to S3:", { originalName });
 
-    // Process as usual
+    // Process headers and count rows via streaming
     let columns = [];
     let totalRows = 0;
     const headerMap = new Map();
 
-    // Create a readable stream from the buffer
-    const bufferStream = new PassThrough();
-    bufferStream.end(fileBuffer);
-
     await new Promise((resolve, reject) => {
-      bufferStream
+      fs.createReadStream(filePath)
         .pipe(
           csv.parse({
             headers: (headers) => {
@@ -85,9 +94,12 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
         .on("error", reject);
     });
 
+    // Delete temporary file
+    fs.unlinkSync(filePath);
+
     res.json({
       success: true,
-      fileName: fileKey, // Use original filename in response
+      fileName: fileKey,
       columns: columns,
       totalRows: totalRows,
       hasDuplicateHeaders: Array.from(headerMap.values()).some(
@@ -96,6 +108,12 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
     });
   } catch (error) {
     console.error("Error parsing CSV:", error);
+
+    // Clean up temp file if exists
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
     res.status(500).json({ error: "Error parsing CSV file: " + error.message });
   }
 });
@@ -114,30 +132,31 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
   }
 
   try {
-    // Upload file to S3 first
-    const fileBuffer = req.file.buffer;
+    // Get file data from multer
+    const filePath = req.file.path;
     const originalName = req.file.originalname;
-    // Use original filename without modification
     const fileKey = originalName;
 
+    // Stream file to S3 from disk
+    const fileStream = fs.createReadStream(filePath);
     const uploadParams = {
       Bucket: UPLOAD_BUCKET,
       Key: fileKey,
-      Body: fileBuffer,
+      Body: fileStream,
       ContentType: req.file.mimetype || "text/csv",
     };
 
     await s3.upload(uploadParams).promise();
 
-    // But keep timestamps for output files to avoid overwrites
-    const logFileName = `validation_log_${originalName}`;
-    const validFileName = `valid_entries_${originalName}`;
+    // Generate output filenames
+    const logFileName = `validation_log_${Date.now()}_${originalName}`;
+    const validFileName = `valid_entries_${Date.now()}_${originalName}`;
 
     let columns = [];
     let totalInvalidEntries = 0;
     let validRecordCount = 0;
     let blankIdentityCount = 0;
-    const headerMap = new Map(); // Track duplicate headers
+    const headerMap = new Map();
 
     // Error and conversion counters
     let errorCounts = {
@@ -183,16 +202,12 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
     logCsvStream.pipe(logStream);
     validCsvStream.pipe(validStream);
 
-    // Process the CSV data from buffer
-    const bufferStream = new PassThrough();
-    bufferStream.end(fileBuffer);
-
+    // Process the CSV data by streaming from disk
     await new Promise((resolve, reject) => {
-      bufferStream
+      fs.createReadStream(filePath)
         .pipe(
           csv.parse({
             headers: (headers) => {
-              // Handle duplicate headers by appending numbers
               return headers.map((header) => {
                 if (!header) return header;
                 const count = headerMap.get(header) || 0;
@@ -210,7 +225,7 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
         })
         .on("data", (row) => {
           const errors = [];
-          let rowNumber = totalInvalidEntries + 1; // Track row number
+          let rowNumber = totalInvalidEntries + validRecordCount + 1;
 
           // Create a copy of the row for potential modifications
           const processedRow = { ...row };
@@ -312,7 +327,7 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
           } else {
             // Write valid row to the valid entries file
             validCsvStream.write(processedRow);
-            validRecordCount++; // Count valid rows
+            validRecordCount++;
           }
         })
         .on("end", () => {
@@ -329,6 +344,9 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
 
     // Wait for S3 uploads to complete
     await Promise.all([logUploadPromise, validUploadPromise]);
+
+    // Delete temporary file
+    fs.unlinkSync(filePath);
 
     // Return the response with error counts by type
     res.json({
@@ -350,7 +368,15 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
     });
   } catch (error) {
     console.error("Error processing CSV:", error);
-    res.status(500).json({ error: "Error processing CSV file" });
+
+    // Clean up temp file if exists
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    res
+      .status(500)
+      .json({ error: "Error processing CSV file: " + error.message });
   }
 });
 
@@ -372,15 +398,17 @@ router.post(
     }
 
     try {
-      // Upload file to S3 first
-      const fileBuffer = req.file.buffer;
+      // Get file data from multer
+      const filePath = req.file.path;
       const originalName = req.file.originalname;
       const fileKey = `${Date.now()}-${originalName}`;
 
+      // Stream file to S3 from disk
+      const fileStream = fs.createReadStream(filePath);
       const uploadParams = {
         Bucket: UPLOAD_BUCKET,
         Key: fileKey,
-        Body: fileBuffer,
+        Body: fileStream,
         ContentType: req.file.mimetype || "text/csv",
       };
 
@@ -411,12 +439,9 @@ router.post(
       // Pipe the CSV stream to the PassThrough stream
       cleanCsvStream.pipe(cleanStream);
 
-      // Process the CSV data from buffer
-      const bufferStream = new PassThrough();
-      bufferStream.end(fileBuffer);
-
+      // Process the CSV data by streaming from disk
       await new Promise((resolve, reject) => {
-        bufferStream
+        fs.createReadStream(filePath)
           .pipe(csv.parse({ headers: true }))
           .on("headers", (headers) => {
             columns = headers;
@@ -445,6 +470,9 @@ router.post(
       // Wait for S3 upload to complete
       await cleanUploadPromise;
 
+      // Delete temporary file
+      fs.unlinkSync(filePath);
+
       res.json({
         success: true,
         fileName: cleanFileName,
@@ -455,7 +483,15 @@ router.post(
       });
     } catch (error) {
       console.error("Error cleaning CSV:", error);
-      res.status(500).json({ error: "Error cleaning CSV file" });
+
+      // Clean up temp file if exists
+      if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+
+      res
+        .status(500)
+        .json({ error: "Error cleaning CSV file: " + error.message });
     }
   }
 );

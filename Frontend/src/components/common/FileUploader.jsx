@@ -111,11 +111,15 @@ function FileUploader({
     };
 
     const handleDrop = (e) => {
+      preventDefaults(e);
+
       if (disabled) return;
 
-      const dt = e.dataTransfer;
-      const files = dt.files;
-      handleFiles({ dataTransfer: { files } });
+      // Fix: Pass the original event object directly to handleFiles
+      // instead of creating a new object
+      if (e.dataTransfer && e.dataTransfer.files) {
+        handleFiles(e);
+      }
     };
 
     // Prevent default drag behaviors
