@@ -45,18 +45,12 @@ export const uploadCSV = async (formData, onUploadProgress) => {
 // Validate CSV data
 export const validateCSVMapping = async (formData, progressCallback) => {
   try {
-    const response = await axios.post(
-      `${
-        process.env.REACT_APP_API_URL || "http://localhost:5000"
-      }/api/validate_csv`,
-      formData,
-      {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-        onUploadProgress: progressCallback,
-      }
-    );
+    const response = await api.post("/validate_csv", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+      onUploadProgress: progressCallback,
+    });
 
     return response.data;
   } catch (error) {
@@ -91,11 +85,7 @@ export const downloadFile = (url, type, options = {}) => {
         throw new Error(`No URL provided for ${type} download`);
       }
 
-      const {
-        accountName = "",
-        dataType = "",
-        baseUrl = process.env.REACT_APP_API_URL || "http://localhost:5000",
-      } = options;
+      const { accountName = "", dataType = "" } = options;
 
       let downloadUrl;
       let fileName;
@@ -105,9 +95,9 @@ export const downloadFile = (url, type, options = {}) => {
       if (url.startsWith("http")) {
         downloadUrl = url;
       } else if (url.startsWith("/")) {
-        downloadUrl = `${baseUrl}${url}`;
+        downloadUrl = `${API_URL.replace("/api", "")}${url}`;
       } else {
-        downloadUrl = `${baseUrl}/api/download/${url}`;
+        downloadUrl = `${API_URL}/download/${url}`;
       }
 
       // Set appropriate filename based on type and include timestamp

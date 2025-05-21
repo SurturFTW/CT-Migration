@@ -21,10 +21,17 @@ function ChargedEventUpload() {
   const [accountId, setAccountId] = useState("");
   const [passcode, setPasscode] = useState("");
   const [apiUrl, setApiUrl] = useState("https://api.clevertap.com/1/upload");
+
   const [specialMappings, setSpecialMappings] = useState({
     identityField: "",
+    identityFieldMapping: "identity",
+    identityFieldType: "string",
     timestampField: "",
+    timestampFieldMapping: "ts",
+    timestampFieldType: "integer",
     groupByField: "",
+    groupByFieldMapping: "",
+    groupByFieldType: "string",
   });
 
   const [previewData, setPreviewData] = useState(null);
@@ -84,28 +91,45 @@ function ChargedEventUpload() {
 
     // Add special field mappings
     if (specialMappings.identityField) {
-      eventMapping[specialMappings.identityField] = "identity";
+      eventMapping[specialMappings.identityField] = {
+        fieldName: specialMappings.identityFieldMapping || "identity",
+        type: specialMappings.identityFieldType || "string",
+      };
     }
 
     if (specialMappings.timestampField) {
-      eventMapping[specialMappings.timestampField] = "ts";
+      eventMapping[specialMappings.timestampField] = {
+        fieldName: specialMappings.timestampFieldMapping || "ts",
+        type: specialMappings.timestampFieldType || "integer",
+      };
+    }
+
+    if (specialMappings.groupByField && specialMappings.groupByFieldMapping) {
+      eventMapping[specialMappings.groupByField] = {
+        fieldName: specialMappings.groupByFieldMapping,
+        type: specialMappings.groupByFieldType || "string",
+      };
     }
 
     // Process regular column mappings
     columnMappings.forEach((mapping) => {
-      // Skip ignored fields and fields already used as special mappings
+      // Skip ignored fields and special fields
       if (
         mapping.type === "ignore" ||
+        mapping.type === "item" ||
         mapping.csv_name === specialMappings.identityField ||
-        mapping.csv_name === specialMappings.timestampField
+        mapping.csv_name === specialMappings.timestampField ||
+        mapping.csv_name === specialMappings.groupByField
       ) {
         return;
       }
 
-      if (mapping.type !== "item") {
-        const targetField = "evtData." + mapping.clevertap_name;
-        eventMapping[mapping.csv_name] = targetField;
-      }
+      const targetField =
+        "evtData." + (mapping.clevertap_name || mapping.csv_name);
+      eventMapping[mapping.csv_name] = {
+        fieldName: targetField,
+        type: mapping.type || "string",
+      };
     });
 
     return eventMapping;
@@ -118,7 +142,8 @@ function ChargedEventUpload() {
       if (mapping.type === "item") {
         itemsFields.push({
           source: mapping.csv_name,
-          target: mapping.clevertap_name,
+          target: mapping.clevertap_name || mapping.csv_name,
+          type: mapping.dataType || "string",
         });
       }
     });
@@ -162,7 +187,8 @@ function ChargedEventUpload() {
       const initialMappings = receivedColumns.map((column) => ({
         csv_name: column,
         clevertap_name: column,
-        type: "string",
+        type: "string", // Default type for event data properties
+        dataType: "string", // Always include dataType for potential item fields
       }));
       setColumnMappings(initialMappings);
 
@@ -467,76 +493,170 @@ function ChargedEventUpload() {
           </li>
         </ul>
       </div>
-      {/* Special mappings section */}
+
       <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
         <h3 className="text-lg font-medium text-gray-800 mb-3">
           Special Field Mappings
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Identity Field */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Identity Field <span className="text-red-500">*</span>
             </label>
-            <select
-              value={specialMappings.identityField}
-              onChange={(e) =>
-                handleSpecialMappingChange("identityField", e.target.value)
-              }
-              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-            >
-              <option value="">Select a field</option>
-              {columns.map((column) => (
-                <option key={`identity-${column}`} value={column}>
-                  {column}
-                </option>
-              ))}
-            </select>
+            <div className="space-y-2">
+              <select
+                value={specialMappings.identityField}
+                onChange={(e) =>
+                  handleSpecialMappingChange("identityField", e.target.value)
+                }
+                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+              >
+                <option value="">Select a field</option>
+                {columns.map((column) => (
+                  <option key={`identity-${column}`} value={column}>
+                    {column}
+                  </option>
+                ))}
+              </select>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={specialMappings.identityFieldMapping || "identity"}
+                  onChange={(e) =>
+                    handleSpecialMappingChange(
+                      "identityFieldMapping",
+                      e.target.value
+                    )
+                  }
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  placeholder="CleverTap field name"
+                />
+                <select
+                  value={specialMappings.identityFieldType || "string"}
+                  onChange={(e) =>
+                    handleSpecialMappingChange(
+                      "identityFieldType",
+                      e.target.value
+                    )
+                  }
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                >
+                  <option value="string">String</option>
+                  <option value="integer">Integer</option>
+                  <option value="float">Float</option>
+                  <option value="boolean">Boolean</option>
+                </select>
+              </div>
+            </div>
             <p className="text-xs text-gray-500 mt-1">
               Maps to CleverTap's identity field (Required)
             </p>
           </div>
 
+          {/* Timestamp Field */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Timestamp Field <span className="text-red-500">*</span>
             </label>
-            <select
-              value={specialMappings.timestampField}
-              onChange={(e) =>
-                handleSpecialMappingChange("timestampField", e.target.value)
-              }
-              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-            >
-              <option value="">Select a field</option>
-              {columns.map((column) => (
-                <option key={`timestamp-${column}`} value={column}>
-                  {column}
-                </option>
-              ))}
-            </select>
+            <div className="space-y-2">
+              <select
+                value={specialMappings.timestampField}
+                onChange={(e) =>
+                  handleSpecialMappingChange("timestampField", e.target.value)
+                }
+                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+              >
+                <option value="">Select a field</option>
+                {columns.map((column) => (
+                  <option key={`timestamp-${column}`} value={column}>
+                    {column}
+                  </option>
+                ))}
+              </select>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={specialMappings.timestampFieldMapping || "ts"}
+                  onChange={(e) =>
+                    handleSpecialMappingChange(
+                      "timestampFieldMapping",
+                      e.target.value
+                    )
+                  }
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  placeholder="CleverTap field name"
+                />
+                <select
+                  value={specialMappings.timestampFieldType || "integer"}
+                  onChange={(e) =>
+                    handleSpecialMappingChange(
+                      "timestampFieldType",
+                      e.target.value
+                    )
+                  }
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                >
+                  <option value="integer">Integer</option>
+                  <option value="string">String</option>
+                  <option value="float">Float</option>
+                </select>
+              </div>
+            </div>
             <p className="text-xs text-gray-500 mt-1">
-              Maps to CleverTap's timestamp (ts) field (Required)
+              Maps to CleverTap's timestamp field (Required)
             </p>
           </div>
 
+          {/* Group By Field */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Group By Field <span className="text-red-500">*</span>
             </label>
-            <select
-              value={specialMappings.groupByField}
-              onChange={(e) =>
-                handleSpecialMappingChange("groupByField", e.target.value)
-              }
-              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-            >
-              <option value="">Select a field</option>
-              {columns.map((column) => (
-                <option key={`groupby-${column}`} value={column}>
-                  {column}
-                </option>
-              ))}
-            </select>
+            <div className="space-y-2">
+              <select
+                value={specialMappings.groupByField}
+                onChange={(e) =>
+                  handleSpecialMappingChange("groupByField", e.target.value)
+                }
+                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+              >
+                <option value="">Select a field</option>
+                {columns.map((column) => (
+                  <option key={`groupby-${column}`} value={column}>
+                    {column}
+                  </option>
+                ))}
+              </select>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={specialMappings.groupByFieldMapping || ""}
+                  onChange={(e) =>
+                    handleSpecialMappingChange(
+                      "groupByFieldMapping",
+                      e.target.value
+                    )
+                  }
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  placeholder="CleverTap field name (optional)"
+                />
+                <select
+                  value={specialMappings.groupByFieldType || "string"}
+                  onChange={(e) =>
+                    handleSpecialMappingChange(
+                      "groupByFieldType",
+                      e.target.value
+                    )
+                  }
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                >
+                  <option value="string">String</option>
+                  <option value="integer">Integer</option>
+                  <option value="float">Float</option>
+                </select>
+              </div>
+            </div>
             <p className="text-xs text-gray-500 mt-1">
               Used to group related items into one transaction (Required)
             </p>
@@ -569,19 +689,29 @@ function ChargedEventUpload() {
                     <li className="flex items-center justify-between">
                       <span className="text-gray-600">Identity Field:</span>
                       <span className="font-medium text-purple-800 bg-white px-2 py-0.5 rounded border border-purple-200">
-                        {specialMappings.identityField || "Not set"}
+                        {specialMappings.identityField
+                          ? `${specialMappings.identityField} → ${specialMappings.identityFieldMapping} (${specialMappings.identityFieldType})`
+                          : "Not set"}
                       </span>
                     </li>
                     <li className="flex items-center justify-between">
                       <span className="text-gray-600">Timestamp Field:</span>
                       <span className="font-medium text-purple-800 bg-white px-2 py-0.5 rounded border border-purple-200">
-                        {specialMappings.timestampField || "Not set"}
+                        {specialMappings.timestampField
+                          ? `${specialMappings.timestampField} → ${specialMappings.timestampFieldMapping} (${specialMappings.timestampFieldType})`
+                          : "Not set"}
                       </span>
                     </li>
                     <li className="flex items-center justify-between">
                       <span className="text-gray-600">Group By Field:</span>
                       <span className="font-medium text-purple-800 bg-white px-2 py-0.5 rounded border border-purple-200">
-                        {specialMappings.groupByField || "Not set"}
+                        {specialMappings.groupByField
+                          ? `${specialMappings.groupByField}${
+                              specialMappings.groupByFieldMapping
+                                ? ` → ${specialMappings.groupByFieldMapping}`
+                                : ""
+                            } (${specialMappings.groupByFieldType})`
+                          : "Not set"}
                       </span>
                     </li>
                   </ul>
@@ -693,8 +823,10 @@ function ChargedEventUpload() {
                           <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                             {column}
                           </td>
+
                           <td className="px-4 py-3 whitespace-nowrap">
                             <div className="flex space-x-2">
+                              {/* EVENT DATA BUTTON */}
                               <button
                                 className={`px-2 py-1 text-xs rounded-full flex items-center ${
                                   mapping.type !== "item" &&
@@ -709,12 +841,19 @@ function ChargedEventUpload() {
                                   );
 
                                   if (existingIndex >= 0) {
+                                    // Set type to a data type (string by default)
                                     newMappings[existingIndex].type = "string";
+                                    // Keep dataType for potential future use
+                                    if (!newMappings[existingIndex].dataType) {
+                                      newMappings[existingIndex].dataType =
+                                        "string";
+                                    }
                                   } else {
                                     newMappings.push({
                                       csv_name: column,
                                       clevertap_name: column,
                                       type: "string",
+                                      dataType: "string", // Store for reference
                                     });
                                   }
 
@@ -732,6 +871,7 @@ function ChargedEventUpload() {
                                 Event Data
                               </button>
 
+                              {/* ITEM FIELD BUTTON */}
                               <button
                                 className={`px-2 py-1 text-xs rounded-full flex items-center ${
                                   mapping.type === "item"
@@ -745,12 +885,34 @@ function ChargedEventUpload() {
                                   );
 
                                   if (existingIndex >= 0) {
+                                    // Set type to "item"
                                     newMappings[existingIndex].type = "item";
+
+                                    // Set dataType based on previous type if available
+                                    if (!newMappings[existingIndex].dataType) {
+                                      if (
+                                        [
+                                          "string",
+                                          "integer",
+                                          "float",
+                                          "boolean",
+                                        ].includes(
+                                          newMappings[existingIndex].type
+                                        )
+                                      ) {
+                                        newMappings[existingIndex].dataType =
+                                          newMappings[existingIndex].type;
+                                      } else {
+                                        newMappings[existingIndex].dataType =
+                                          "string";
+                                      }
+                                    }
                                   } else {
                                     newMappings.push({
                                       csv_name: column,
                                       clevertap_name: column,
                                       type: "item",
+                                      dataType: "string",
                                     });
                                   }
 
@@ -765,6 +927,7 @@ function ChargedEventUpload() {
                                 Item Field
                               </button>
 
+                              {/* IGNORE BUTTON */}
                               <button
                                 className={`px-2 py-1 text-xs rounded-full flex items-center ${
                                   mapping.type === "ignore"
@@ -778,12 +941,20 @@ function ChargedEventUpload() {
                                   );
 
                                   if (existingIndex >= 0) {
+                                    // Set type to "ignore"
                                     newMappings[existingIndex].type = "ignore";
+
+                                    // Keep dataType for reference in case we switch back
+                                    if (!newMappings[existingIndex].dataType) {
+                                      newMappings[existingIndex].dataType =
+                                        "string";
+                                    }
                                   } else {
                                     newMappings.push({
                                       csv_name: column,
                                       clevertap_name: column,
                                       type: "ignore",
+                                      dataType: "string", // Keep for reference
                                     });
                                   }
 
@@ -801,6 +972,7 @@ function ChargedEventUpload() {
                               </button>
                             </div>
                           </td>
+
                           <td className="px-4 py-3 whitespace-nowrap">
                             <input
                               type="text"
@@ -835,7 +1007,13 @@ function ChargedEventUpload() {
                               className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                                 mapping.type === "ignore" ? "bg-gray-100" : ""
                               }`}
-                              value={mapping.dataType || "string"}
+                              value={
+                                mapping.type === "item"
+                                  ? mapping.dataType || "string"
+                                  : mapping.type === "ignore"
+                                  ? "string"
+                                  : mapping.type || "string"
+                              }
                               disabled={mapping.type === "ignore"}
                               onChange={(e) => {
                                 const newMappings = [...columnMappings];
@@ -845,13 +1023,16 @@ function ChargedEventUpload() {
 
                                 if (existingIndex >= 0) {
                                   if (mapping.type === "item") {
+                                    // For item fields, update the dataType property
                                     newMappings[existingIndex].dataType =
                                       e.target.value;
-                                  } else {
+                                  } else if (mapping.type !== "ignore") {
+                                    // For event data properties, update the type property
                                     newMappings[existingIndex].type =
                                       e.target.value;
                                   }
                                 } else {
+                                  // Add a new mapping if it doesn't exist
                                   newMappings.push({
                                     csv_name: column,
                                     clevertap_name: column,
@@ -1001,11 +1182,19 @@ function ChargedEventUpload() {
             setAccountId("");
             setPasscode("");
             setApiUrl("https://api.clevertap.com/1/upload");
+
             setSpecialMappings({
               identityField: "",
+              identityFieldMapping: "identity",
+              identityFieldType: "string",
               timestampField: "",
+              timestampFieldMapping: "ts",
+              timestampFieldType: "integer",
               groupByField: "",
+              groupByFieldMapping: "",
+              groupByFieldType: "string",
             });
+
             // Reset columns and mappings to empty arrays
             setColumns([]);
             setColumnMappings([]);
