@@ -8,10 +8,6 @@ import SftpGenerator from "./components/GenerateSFTP";
 import JsonConverter from "./components/JsonConverter";
 import ChargedEventUpload from "./components/ChargedEventUpload";
 
-import CSVSplitter from "./components/CSVSplitter";
-import PhoneNumberProcessor from "./components/PhoneNumber";
-// import CleverTapUploader from "./components/EventUploader";
-
 function App() {
   return (
     <Router>
@@ -22,10 +18,6 @@ function App() {
         <Route path="/sftp-generator" element={<SftpGenerator />} />
         <Route path="/json-converter" element={<JsonConverter />} />
         <Route path="/ChargedEventUpload" element={<ChargedEventUpload />} />
-
-        <Route path="/CSVSplit" element={<CSVSplitter />} />
-        <Route path="/PhoneNumber" element={<PhoneNumberProcessor />} />
-        {/* <Route path="/CleverTapUploader" element={<CleverTapUploader />} /> */}
       </Routes>
     </Router>
   );

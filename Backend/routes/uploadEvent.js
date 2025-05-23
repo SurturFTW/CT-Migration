@@ -35,9 +35,112 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 * 1024 }, // 5GB limit
 });
 
+// First, add this helper function near your other helper functions
+const sleep = (ms) => {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+};
+
+// Helper function to create failed batches log file
+const createFailedBatchesLogFile = (accountId) => {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const fileName = `failed_batches_${accountId}_${timestamp}.json`;
+  const filePath = path.join(os.tmpdir(), fileName);
+
+  // Initialize the file with an empty array
+  fs.writeFileSync(
+    filePath,
+    JSON.stringify(
+      {
+        accountId,
+        timestamp: new Date().toISOString(),
+        failedBatches: [],
+      },
+      null,
+      2
+    )
+  );
+
+  return filePath;
+};
+
+// Helper function to append failed batch to log file
+const logFailedBatch = (logFilePath, batchNumber, events, error, response) => {
+  try {
+    // Read existing log file
+    const logData = JSON.parse(fs.readFileSync(logFilePath, "utf8"));
+
+    // Create failed batch entry
+    const failedBatchEntry = {
+      batchNumber,
+      timestamp: new Date().toISOString(),
+      eventsCount: events.length,
+      error: {
+        message: error.message,
+        responseStatus: error.response?.status,
+        responseData: error.response?.data,
+        responseHeaders: error.response?.headers,
+      },
+      payload: {
+        d: events, // The actual payload that failed
+      },
+    };
+
+    // Add to failed batches array
+    logData.failedBatches.push(failedBatchEntry);
+
+    // Write back to file
+    fs.writeFileSync(logFilePath, JSON.stringify(logData, null, 2));
+
+    console.log(`💾 Failed batch ${batchNumber} logged to: ${logFilePath}`);
+  } catch (logError) {
+    console.error("❌ Failed to log failed batch:", logError);
+  }
+};
+
+// Helper function to upload failed batches log to S3
+const uploadFailedBatchesLogToS3 = async (logFilePath, accountId) => {
+  try {
+    if (!fs.existsSync(logFilePath)) {
+      return null;
+    }
+
+    const fileStats = fs.statSync(logFilePath);
+    if (fileStats.size === 0) {
+      return null; // Don't upload empty files
+    }
+
+    const fileName = path.basename(logFilePath);
+    const s3Key = `failed_batches_logs/${fileName}`;
+
+    const fileStream = fs.createReadStream(logFilePath);
+    const uploadResult = await s3
+      .upload({
+        Bucket: UPLOAD_BUCKET,
+        Key: s3Key,
+        Body: fileStream,
+        ContentType: "application/json",
+        Metadata: {
+          accountId: accountId,
+          uploadTime: new Date().toISOString(),
+        },
+      })
+      .promise();
+
+    console.log(
+      `📤 Failed batches log uploaded to S3: ${uploadResult.Location}`
+    );
+    return uploadResult.Location;
+  } catch (error) {
+    console.error("❌ Failed to upload failed batches log to S3:", error);
+    return null;
+  }
+};
+
 router.post("/upload_event", upload.single("file"), async (req, res) => {
   // Track file for cleanup
   const uploadedFilePath = req.file ? req.file.path : null;
+  let failedBatchesLogPath = null;
+  let failedBatchesCount = 0;
 
   try {
     const {
@@ -67,6 +170,9 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
       });
     }
 
+    // Create failed batches log file
+    failedBatchesLogPath = createFailedBatchesLogFile(accountId);
+
     // Determine the API URL - use provided URL or construct the default CleverTap endpoint
     const uploadUrl = apiUrl || "https://api.clevertap.com/1/upload";
 
@@ -84,6 +190,8 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
       totalEvents: 0,
       groupedEvents: 0,
       batches: 0,
+      successfulBatches: 0,
+      failedBatches: 0,
       results: [],
     };
 
@@ -123,11 +231,10 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
           if (typeof value === "boolean") return value;
           return String(value).toLowerCase() === "true";
         case "string":
-        default:
-          // For strings, try to parse JSON if it looks like JSON
+          // For string type, try to detect and parse JSON automatically
           if (typeof value === "string") {
             const trimmedValue = value.trim();
-
+            // Check if the string looks like JSON (starts with { or [)
             if (
               (trimmedValue.startsWith("{") && trimmedValue.endsWith("}")) ||
               (trimmedValue.startsWith("[") && trimmedValue.endsWith("]"))
@@ -135,19 +242,23 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
               try {
                 return JSON.parse(trimmedValue);
               } catch (e) {
-                return trimmedValue;
+                // If JSON parsing fails, return as string
+                return value;
               }
             }
-
-            // Handle automatic conversion for simple types
-            if (!isNaN(trimmedValue) && trimmedValue !== "") {
-              return Number(trimmedValue);
-            }
-
-            if (trimmedValue.toLowerCase() === "true") return true;
-            if (trimmedValue.toLowerCase() === "false") return false;
           }
-
+          return String(value);
+        case "json":
+          // Explicit JSON parsing
+          if (typeof value === "string") {
+            try {
+              return JSON.parse(value);
+            } catch (e) {
+              return value;
+            }
+          }
+          return value;
+        default:
           return value;
       }
     };
@@ -180,6 +291,7 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
 
         batchNumber++;
         results.batches++;
+        results.successfulBatches++;
 
         // Enhanced response logging
         console.log(
@@ -194,8 +306,14 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
           responseCode: response.status,
           durationMs: duration,
           timestamp: new Date().toISOString(),
+          success: true,
         });
       } catch (error) {
+        batchNumber++;
+        results.batches++;
+        results.failedBatches++;
+        failedBatchesCount++;
+
         console.error(
           "❌ Batch upload error:",
           error.response?.data || error.message
@@ -210,12 +328,23 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
           );
         }
 
+        // Log the failed batch to file
+        logFailedBatch(
+          failedBatchesLogPath,
+          results.batches,
+          events,
+          error,
+          error.response
+        );
+
         results.results.push({
-          batchNumber: results.batches + 1,
+          batchNumber: results.batches,
           eventsCount: events.length,
           error: error.response?.data || error.message,
           status: "error",
+          responseCode: error.response?.status,
           timestamp: new Date().toISOString(),
+          success: false,
         });
       }
     }
@@ -292,7 +421,6 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
             }
 
             // Get or create group value for transaction grouping
-            // SIMPLE APPROACH FROM oldEvents.js - only use groupByField for grouping
             const groupValue =
               row[groupByField] || `group_${Date.now()}_${totalEvents}`;
 
@@ -311,9 +439,7 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
               };
 
               // Use CleverTap field name for the grouping field
-              // If a specific mapping is provided, use it; otherwise use "Bill No"
-              const groupFieldName =
-                parsedSpecialFields.groupByFieldMapping || "Bill No";
+              const groupFieldName = parsedSpecialFields.groupByFieldMapping;
               eventObj.evtData[groupFieldName] = groupValue;
 
               // Add any special top-level fields from parsedSpecialFields
@@ -442,18 +568,23 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
             // Convert the map values to an array of events
             allEvents = Array.from(transactionMap.values());
 
+            // Calculate the raw event count and final event count
+            const rawEventCount = totalEvents;
+            const finalEventCount = allEvents.length;
+            const eventsReduction = rawEventCount - finalEventCount;
+
             // Process batches sequentially
-            console.log(
-              `Processing ${allEvents.length} events in batches of ${batchSizeNum}...`
-            );
+            console.log(`
+                ---------------------------------------------
+                EVENT COUNT SUMMARY:
+                - Total CSV rows: ${totalRows}
+                - Raw events created: ${rawEventCount}  
+                - Final events after grouping: ${finalEventCount}
+                - Events reduced by grouping: ${eventsReduction}
+                ---------------------------------------------
+                Processing ${finalEventCount} events in batches of ${batchSizeNum}...`);
 
-            // In the upload_event route, modify the batch processing section:
-            // Enhanced batch logging when processing events
-            console.log(
-              `Processing ${allEvents.length} events in batches of ${batchSizeNum}...`
-            );
-
-            // Process one batch at a time with enhanced logging
+            // Process one batch at a time with enhanced logging and delay
             for (let i = 0; i < allEvents.length; i += batchSizeNum) {
               const batch = allEvents.slice(i, i + batchSizeNum);
               const batchNumber = Math.floor(i / batchSizeNum) + 1;
@@ -472,34 +603,52 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
                     `Batch ${batchNumber} first event identity: ${batch[0].identity}, timestamp: ${batch[0].ts}`
                   );
 
-                  // Log number of items in the first event if it has any
-                  if (
-                    batch[0].evtData.Items &&
-                    batch[0].evtData.Items.length > 0
-                  ) {
-                    console.log(
-                      `Batch ${batchNumber} first event has ${batch[0].evtData.Items.length} items`
-                    );
-                  }
-
                   // Wait for each batch to complete before sending the next one
                   await processBatch(batch);
 
                   // Log successful completion
                   console.log(`Successfully completed batch ${batchNumber}`);
+
+                  // Add 2-second delay before the next batch (but not after the last batch)
+                  if (i + batchSizeNum < allEvents.length) {
+                    console.log(
+                      `Waiting 2 seconds before processing next batch...`
+                    );
+                    await sleep(1000);
+                  }
                 } catch (e) {
                   console.error(`Batch ${batchNumber} processing failed:`, e);
+
+                  // You might want to add a longer delay after errors
+                  console.log(
+                    `Error occurred, waiting 5 seconds before continuing...`
+                  );
+                  await sleep(2000);
                 }
               }
             }
 
+            // Update results with detailed metrics
             results.totalRows = totalRows;
-            results.totalEvents = totalEvents;
-            results.groupedEvents = allEvents.length;
+            results.rawEvents = rawEventCount;
+            results.totalEvents = finalEventCount;
+            results.groupedEvents = results.groupedEvents;
+            results.eventsReduction = eventsReduction;
 
+            results.batches = results.batches || 0;
+            results.successfulBatches = results.successfulBatches || 0;
+            results.failedBatches = results.failedBatches || 0;
+
+            console.log(`File name: ${req.file.originalname}`);
             console.log(
-              `Finished processing ${totalRows} rows into ${allEvents.length} events in ${results.batches} batches`
+              `Finished processing with ${totalRows} rows into ${finalEventCount} events in ${results.batches} batches`
             );
+            console.log(
+              `Successful batches: ${results.successfulBatches}, Failed batches: ${results.failedBatches}`
+            );
+
+            console.log("Failed batches log file path:", failedBatchesLogPath);
+
             resolve();
           })
           .on("error", (error) => {
@@ -512,7 +661,7 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
     // Process the file
     await processLargeFile();
 
-    // Upload the file to S3 if needed for audit purposes
+    // Upload the original file to S3 if needed for audit purposes
     try {
       const fileStream = fs.createReadStream(req.file.path);
       await s3
@@ -525,8 +674,21 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
         .promise();
     } catch (s3Error) {
       console.error("S3 upload failed:", s3Error);
-      // Continue anyway since the processing was successful
     }
+
+    // Upload failed batches log to S3 if there were failures
+    let failedBatchesLogUrl = null;
+    if (failedBatchesCount > 0 && failedBatchesLogPath) {
+      failedBatchesLogUrl = await uploadFailedBatchesLogToS3(
+        failedBatchesLogPath,
+        accountId
+      );
+    }
+
+    // Add failed batches info to results
+    results.failedBatchesLogPath = failedBatchesLogPath;
+    results.failedBatchesLogUrl = failedBatchesLogUrl;
+    results.totalFailedBatches = failedBatchesCount;
 
     res.json(results);
   } catch (error) {
@@ -536,12 +698,28 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
       stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
     });
   } finally {
-    // Clean up the temporary file
+    // Clean up the temporary files
     if (uploadedFilePath && fs.existsSync(uploadedFilePath)) {
       try {
         fs.unlinkSync(uploadedFilePath);
       } catch (err) {
-        console.error("Failed to clean up file:", err);
+        console.error("Failed to clean up uploaded file:", err);
+      }
+    }
+
+    // Clean up the failed batches log file from local temp (keep S3 copy)
+    if (failedBatchesLogPath && fs.existsSync(failedBatchesLogPath)) {
+      try {
+        // Only delete if we successfully uploaded to S3 or if there were no failures
+        if (failedBatchesCount === 0) {
+          fs.unlinkSync(failedBatchesLogPath);
+        } else {
+          console.log(
+            `💾 Failed batches log preserved at: ${failedBatchesLogPath}`
+          );
+        }
+      } catch (err) {
+        console.error("Failed to clean up failed batches log file:", err);
       }
     }
   }
@@ -600,10 +778,10 @@ router.post("/preview_event", upload.single("file"), async (req, res) => {
           if (typeof value === "boolean") return value;
           return String(value).toLowerCase() === "true";
         case "string":
-        default:
+          // For string type, try to detect and parse JSON automatically
           if (typeof value === "string") {
             const trimmedValue = value.trim();
-
+            // Check if the string looks like JSON (starts with { or [)
             if (
               (trimmedValue.startsWith("{") && trimmedValue.endsWith("}")) ||
               (trimmedValue.startsWith("[") && trimmedValue.endsWith("]"))
@@ -611,18 +789,23 @@ router.post("/preview_event", upload.single("file"), async (req, res) => {
               try {
                 return JSON.parse(trimmedValue);
               } catch (e) {
-                return trimmedValue;
+                // If JSON parsing fails, return as string
+                return value;
               }
             }
-
-            if (!isNaN(trimmedValue) && trimmedValue !== "") {
-              return Number(trimmedValue);
-            }
-
-            if (trimmedValue.toLowerCase() === "true") return true;
-            if (trimmedValue.toLowerCase() === "false") return false;
           }
-
+          return String(value);
+        case "json":
+          // Explicit JSON parsing
+          if (typeof value === "string") {
+            try {
+              return JSON.parse(value);
+            } catch (e) {
+              return value;
+            }
+          }
+          return value;
+        default:
           return value;
       }
     };
@@ -639,7 +822,7 @@ router.post("/preview_event", upload.single("file"), async (req, res) => {
             totalRowsProcessed++;
 
             // Skip empty rows
-            if (!row || Object.keys(row).length === 0) return;
+            // if (!row || Object.keys(row).length === 0) return;
 
             // Find identity and timestamp from the mappings
             let identity = null;
