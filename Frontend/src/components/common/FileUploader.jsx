@@ -115,8 +115,7 @@ function FileUploader({
 
       if (disabled) return;
 
-      // Fix: Pass the original event object directly to handleFiles
-      // instead of creating a new object
+      // Fix: Pass the original event object directly to handleFiles instead of creating a new object
       if (e.dataTransfer && e.dataTransfer.files) {
         handleFiles(e);
       }

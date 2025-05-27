@@ -439,7 +439,8 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
               };
 
               // Use CleverTap field name for the grouping field
-              const groupFieldName = parsedSpecialFields.groupByFieldMapping;
+              const groupFieldName =
+                parsedSpecialFields.groupByFieldMapping || groupByField;
               eventObj.evtData[groupFieldName] = groupValue;
 
               // Add any special top-level fields from parsedSpecialFields
@@ -899,9 +900,8 @@ router.post("/preview_event", upload.single("file"), async (req, res) => {
                 };
 
                 // Use CleverTap field name for the grouping field
-                // If a specific mapping is provided, use it; otherwise use "Bill No"
                 const groupFieldName =
-                  parsedSpecialFields.groupByFieldMapping || "Bill No";
+                  parsedSpecialFields.groupByFieldMapping || groupByField;
                 eventObj.evtData[groupFieldName] = groupValue;
 
                 // Add any special top-level fields from parsedSpecialFields
