@@ -1486,7 +1486,7 @@ function SftpGenerator() {
                                     .blankIdentityCount
                                 }
                               </span>{" "}
-                              rows have blank identity values.
+                              rows have blank, 0 or Null identity values.
                             </li>
                           )}
 

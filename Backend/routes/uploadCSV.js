@@ -223,6 +223,7 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
           logCsvStream.write(["Row Number", ...columns, "Error Description"]);
           validCsvStream.write(columns);
         })
+
         .on("data", (row) => {
           const errors = [];
           let rowNumber = totalInvalidEntries + validRecordCount + 1;
@@ -231,12 +232,16 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
           const processedRow = { ...row };
 
           // First, check if the identity column value is blank or undefined
+          const identityValue = row[identityColumn];
           if (
-            !row[identityColumn] ||
-            String(row[identityColumn]).trim() === ""
+            !identityValue ||
+            String(identityValue).trim() === "" ||
+            String(identityValue).toLowerCase().trim() === "null" ||
+            String(identityValue).trim() === "0" ||
+            Number(identityValue) === 0
           ) {
             errors.push(
-              `Field "${identityColumn}": Identity value is blank or missing. This field is required.`
+              `Field "${identityColumn}": Identity value is blank, missing, null, or zero. This field is required and must have a valid value.`
             );
             errorCounts.blankIdentities++;
             blankIdentityCount++;
@@ -379,121 +384,5 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
       .json({ error: "Error processing CSV file: " + error.message });
   }
 });
-
-router.post(
-  "/clean_blank_identities",
-  upload.single("file"),
-  async (req, res) => {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
-
-    // Get identity column name from request
-    const identityColumn = req.body.identityColumn;
-
-    if (!identityColumn) {
-      return res
-        .status(400)
-        .json({ error: "Identity column name is required" });
-    }
-
-    try {
-      // Get file data from multer
-      const filePath = req.file.path;
-      const originalName = req.file.originalname;
-      const fileKey = `${Date.now()}-${originalName}`;
-
-      // Stream file to S3 from disk
-      const fileStream = fs.createReadStream(filePath);
-      const uploadParams = {
-        Bucket: UPLOAD_BUCKET,
-        Key: fileKey,
-        Body: fileStream,
-        ContentType: req.file.mimetype || "text/csv",
-      };
-
-      await s3.upload(uploadParams).promise();
-
-      const cleanFileName = `clean_data_${Date.now()}.csv`;
-
-      let columns = [];
-      let totalRows = 0;
-      let removedRows = 0;
-
-      // Create PassThrough stream for S3 upload
-      const cleanStream = new PassThrough();
-
-      // Set up S3 upload
-      const cleanUploadPromise = s3
-        .upload({
-          Bucket: OUTPUT_BUCKET,
-          Key: cleanFileName,
-          Body: cleanStream,
-          ContentType: "text/csv",
-        })
-        .promise();
-
-      // Create CSV stream for formatting
-      const cleanCsvStream = csv.format({ headers: true });
-
-      // Pipe the CSV stream to the PassThrough stream
-      cleanCsvStream.pipe(cleanStream);
-
-      // Process the CSV data by streaming from disk
-      await new Promise((resolve, reject) => {
-        fs.createReadStream(filePath)
-          .pipe(csv.parse({ headers: true }))
-          .on("headers", (headers) => {
-            columns = headers;
-            cleanCsvStream.write(columns);
-          })
-          .on("data", (row) => {
-            totalRows++;
-
-            // Check if the identity column has a value
-            if (
-              row[identityColumn] &&
-              String(row[identityColumn]).trim() !== ""
-            ) {
-              cleanCsvStream.write(row);
-            } else {
-              removedRows++;
-            }
-          })
-          .on("end", () => {
-            cleanCsvStream.end();
-            resolve();
-          })
-          .on("error", reject);
-      });
-
-      // Wait for S3 upload to complete
-      await cleanUploadPromise;
-
-      // Delete temporary file
-      fs.unlinkSync(filePath);
-
-      res.json({
-        success: true,
-        fileName: cleanFileName,
-        originalRows: totalRows,
-        removedRows: removedRows,
-        remainingRows: totalRows - removedRows,
-        cleanFileUrl: `/api/download/${cleanFileName}`,
-      });
-    } catch (error) {
-      console.error("Error cleaning CSV:", error);
-
-      // Clean up temp file if exists
-      if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
-
-      res
-        .status(500)
-        .json({ error: "Error cleaning CSV file: " + error.message });
-    }
-  }
-);
 
 module.exports = router;

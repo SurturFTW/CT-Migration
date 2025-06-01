@@ -1,9 +1,6 @@
 Backend/node_modules
 Frontend/node_modules
 
-/OldBackup
-/OldBackup-AWS
-
 Backend/package-lock.json
 Frontend/package-lock.json
 
@@ -12,6 +9,7 @@ Backend/.env
 
 Backend/uploads
 Backend/output
+Backend/temp/
 
 .DS_Store
-.gitignore
+
