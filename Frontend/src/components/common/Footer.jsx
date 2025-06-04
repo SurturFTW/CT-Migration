@@ -1,23 +1,24 @@
-import React from "react";
+import React, { useEffect } from "react";
 import Darkmode from "darkmode-js";
 
 function Footer() {
-  const options = {
-    bottom: "45px", // default: '32px'
-    right: "64px", // default: '32px'
-    left: "unset", // default: 'unset'
-    time: "0.5s", // default: '0.3s'
-    mixColor: "#fff", // default: '#fff'
-    backgroundColor: "#fff", // default: '#fff'
-    buttonColorDark: "#100f2c", // default: '#100f2c'
-    buttonColorLight: "#fff", // default: '#fff'
-    saveInCookies: false, // default: true,
-    label: "🌓", // default: ''
-    autoMatchOsTheme: true, // default: true
-  };
-
-  const darkmode = new Darkmode(options);
-  darkmode.showWidget();
+  useEffect(() => {
+    const options = {
+      bottom: "45px",
+      right: "64px",
+      left: "unset",
+      time: "0.5s",
+      mixColor: "#fff",
+      backgroundColor: "#fff",
+      buttonColorDark: "#100f2c",
+      buttonColorLight: "#fff",
+      saveInCookies: false,
+      label: "🌓",
+      autoMatchOsTheme: true,
+    };
+    const darkmode = new Darkmode(options);
+    darkmode.showWidget();
+  }, []); // Only run once when component mounts
 
   return (
     <footer className="bg-white border-t border-gray-200 py-6 mt-auto">

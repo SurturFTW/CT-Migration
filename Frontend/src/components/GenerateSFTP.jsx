@@ -77,39 +77,37 @@ function SftpGenerator() {
     <div className="flex items-center space-x-4">
       <button
         onClick={() => navigate("/dashboard")}
-        className="border border-black text-black px-4 py-1.5 rounded text-sm font-medium hover:bg-gray-50 transition"
+        className="border border-black text-black px-4 py-2 rounded-xl text-sm font-medium hover:bg-gray-50 transition-all duration-200"
       >
         Back to Dashboard
       </button>
 
       <Dropdown
         trigger={
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-black font-bold">
+          <div className="flex items-center space-x-2 cursor-pointer">
+            <div className="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center text-black font-bold text-base shadow-sm">
               {clientEmail.charAt(0).toUpperCase()}
             </div>
             <i className="fas fa-chevron-down text-gray-500"></i>
           </div>
         }
       >
-        <ul className="py-2">
-          <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
+        <ul className="py-2 rounded-lg shadow-lg">
+          <li className="px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
             <i className="fas fa-user mr-2 text-gray-500"></i>
             <span className="font-medium">Account:</span> {accountName}
           </li>
-          <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
+          <li className="px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
             <i className="fas fa-envelope mr-2 text-gray-500"></i>
             <span className="font-medium">Email:</span> {clientEmail}
           </li>
           <hr className="my-2 border-gray-200" />
 
           <li
-            className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-black cursor-pointer"
+            className="px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 hover:text-black cursor-pointer"
             onClick={() => {
-              // Clear user data from localStorage
               localStorage.removeItem("accountName");
               localStorage.removeItem("email");
-
               navigate("/login");
             }}
           >
@@ -351,16 +349,16 @@ function SftpGenerator() {
 
     const handleDragOver = (e) => {
       e.preventDefault();
-      dropZone.classList.add("border-gray-400");
+      dropZone.classList.add("border-blue-400");
     };
 
     const handleDragLeave = () => {
-      dropZone.classList.remove("border-gray-400");
+      dropZone.classList.remove("border-blue-400");
     };
 
     const handleDrop = (e) => {
       e.preventDefault();
-      dropZone.classList.remove("border-gray-400");
+      dropZone.classList.remove("border-blue-400");
 
       if (e.dataTransfer.files.length) {
         const droppedFile = e.dataTransfer.files[0];
@@ -394,7 +392,7 @@ function SftpGenerator() {
     };
   }, []);
 
-  // Continue to validation after identity mapping\
+  // Continue to validation after identity mapping
   const handleContinueToValidation = async () => {
     if (!identityColumn) {
       displayError("Identity column is required");
@@ -404,20 +402,12 @@ function SftpGenerator() {
     try {
       setLoading(true);
       setErrorMessage("");
-      console.log("Starting validation with identity column:", identityColumn);
 
       const formData = new FormData();
       formData.append("file", file);
       formData.append("identityColumn", identityColumn);
       formData.append("emailColumn", emailColumn || "");
       formData.append("phoneColumn", phoneColumn || "");
-
-      console.log("Sending validation request with:", {
-        identity: identityColumn,
-        email: emailColumn,
-        phone: phoneColumn,
-        fileName: selectedFileName,
-      });
 
       // Use the new API function for validation
       const responseData = await validateCSVMapping(
@@ -430,13 +420,13 @@ function SftpGenerator() {
         }
       );
 
-      console.log("Validation response data:", responseData);
-
       // Set validation results
       setValidationResults(responseData);
 
-      // Add debug logging
-      console.log("Full validation results:", responseData);
+      // Update totalRows from validation response
+      if (responseData && responseData.totalRows) {
+        setTotalRows(responseData.totalRows);
+      }
 
       // Create initial column mappings
       if (headers && headers.length > 0) {
@@ -471,13 +461,11 @@ function SftpGenerator() {
   const handleGenerateFiles = async () => {
     try {
       setLoading(true);
-      console.log("Generating files...");
 
       // Format columns as expected by the backend
       const formattedColumns = columnMappings.map((mapping) => {
         // Ensure each mapping is properly formatted
         if (!mapping || typeof mapping !== "object") {
-          console.error("Invalid mapping:", mapping);
           throw new Error("Invalid column mapping detected");
         }
 
@@ -490,8 +478,6 @@ function SftpGenerator() {
         };
       });
 
-      console.log("Formatted columns:", formattedColumns);
-
       const payload = {
         accountName: localStorage.getItem("accountName") || "default",
         columns: formattedColumns,
@@ -502,7 +488,6 @@ function SftpGenerator() {
         identityColumn: identityColumn,
       };
 
-      console.log("Sending payload:", payload);
       const response = await generateFiles(payload);
 
       if (
@@ -607,107 +592,64 @@ function SftpGenerator() {
       : downloadLinks;
 
     return (
-      <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
-        <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
-          <i className="fas fa-file-export text-black mr-3"></i>Files Generated
+      <div className="bg-white p-8 rounded-xl shadow-md border border-gray-200">
+        <h2 className="text-xl font-semibold text-black mb-5 flex items-center">
+          <i className="fas fa-file-export text-black mr-3 text-2xl"></i>Files
+          Generated
         </h2>
 
-        <div className="mb-8 p-4 bg-green-50 text-green-800 rounded-lg border border-green-200">
+        <div className="mb-6 p-5 bg-green-50 text-green-800 rounded-xl border border-green-200">
           <div className="flex">
-            <i className="fas fa-check-circle mr-2 text-xl"></i>
-            <span className="font-medium">
+            <i className="fas fa-check-circle mr-3 text-xl"></i>
+            <span className="font-medium text-base">
               Success! Your migration files have been generated.
             </span>
           </div>
         </div>
 
-        <div className="p-6 rounded-lg border border-gray-300 mb-6">
+        <div className="p-6 rounded-xl border border-gray-200 mb-6 bg-gray-50">
           <h3 className="text-lg font-medium text-gray-700 mb-4">
             Download Options
           </h3>
           <div className="space-y-4">
             {links.zip && (
-              <div className="p-4 border border-gray-200 rounded-md bg-white">
+              <div className="p-4 border border-gray-200 rounded-xl bg-white shadow-sm">
                 <div className="flex justify-between items-center">
                   <div className="flex items-center">
-                    <i className="fas fa-file-archive text-gray-500 text-xl mr-3"></i>
+                    <i className="fas fa-file-archive text-gray-500 mr-3 text-xl"></i>
                     <div>
-                      <p className="font-medium">All Files</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="font-medium text-base">All Files</p>
+                      <p className="text-sm text-gray-500 mt-1">
                         Contains manifest and CSV files
                       </p>
                     </div>
                   </div>
                   <button
                     onClick={() => handleFileDownload(links.zip, "zip")}
-                    className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
+                    className="bg-black text-white px-4 py-2.5 rounded-xl hover:bg-gray-800 transition-colors text-sm flex items-center"
                   >
                     <i className="fas fa-download mr-2"></i>Download ZIP
                   </button>
                 </div>
               </div>
             )}
-
-            {/* {links.manifest && (
-              <div className="p-4 border border-gray-200 rounded-md bg-white">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center">
-                    <i className="fas fa-file-code text-gray-500 text-xl mr-3"></i>
-                    <div>
-                      <p className="font-medium">Manifest File</p>
-                      <p className="text-sm text-gray-500">
-                        JSON configuration for SFTP upload
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleFileDownload(links.manifest, "manifest")}
-                    className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
-                  >
-                    <i className="fas fa-download mr-2"></i>Download JSON
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {links.csv && (
-              <div className="p-4 border border-gray-200 rounded-md bg-white">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center">
-                    <i className="fas fa-file-csv text-gray-500 text-xl mr-3"></i>
-                    <div>
-                      <p className="font-medium">CSV Data File</p>
-                      <p className="text-sm text-gray-500">
-                        Processed data ready for import
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleFileDownload(links.csv, "csv")}
-                    className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors text-sm flex items-center"
-                  >
-                    <i className="fas fa-download mr-2"></i>Download CSV
-                  </button>
-                </div>
-              </div>
-            )} */}
           </div>
         </div>
 
-        <div className="mt-8 flex justify-between">
+        <div className="mt-7 flex justify-between">
           <button
             onClick={() => {
               handleReset();
               setCurrentStep(1);
             }}
-            className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
+            className="bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl hover:bg-gray-300 transition-colors flex items-center text-base"
           >
             <i className="fas fa-redo mr-2"></i>Start Over
           </button>
 
           <button
             onClick={() => navigate("/dashboard")}
-            className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium"
+            className="bg-black text-white px-5 py-2.5 rounded-xl hover:bg-gray-800 transition-colors flex items-center text-base"
           >
             <i className="fas fa-home mr-2"></i>Go to Dashboard
           </button>
@@ -732,13 +674,13 @@ function SftpGenerator() {
   // Render validation step
   const renderValidationStep = () => {
     return (
-      <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
-        <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
-          <i className="fas fa-map-marked-alt text-black mr-3"></i>Column
-          Mapping
+      <div className="bg-white p-8 rounded-xl shadow-md border border-gray-200">
+        <h2 className="text-xl font-semibold text-black mb-5 flex items-center">
+          <i className="fas fa-map-marked-alt text-black mr-3 text-2xl"></i>
+          Column Mapping
         </h2>
 
-        <div className="w-full h-px bg-gray-200 mb-6"></div>
+        <div className="w-full h-px bg-gray-200 mb-5"></div>
 
         {/* Client Information section */}
         <div className="mb-6">
@@ -747,12 +689,12 @@ function SftpGenerator() {
           </h3>
 
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-base font-medium text-gray-700 mb-2">
               <span className="text-red-500">*</span> Email Address:
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                <i className="fas fa-envelope text-gray-400"></i>
+                <i className="fas fa-envelope text-gray-400 text-base"></i>
               </div>
               <input
                 type="email"
@@ -760,51 +702,53 @@ function SftpGenerator() {
                 onChange={(e) => setClientEmail(e.target.value)}
                 required
                 placeholder="Enter your email address"
-                className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all"
+                className="w-full pl-10 p-3 border border-gray-300 rounded-xl focus:ring-1 focus:ring-black focus:border-black outline-none bg-white transition-all text-base"
               />
             </div>
-            <p className="mt-1 text-sm text-gray-500">
+            <p className="mt-2 text-sm text-gray-500">
               You will get logs on this email address.
             </p>
           </div>
         </div>
 
         {/* Column Mapping section */}
-        <div className="mb-6 border-t border-gray-200 pt-4">
-          <h3 className="text-lg font-semibold text-black mb-4">
+        <div className="mb-6 border-t border-gray-200 pt-5">
+          <h3 className="text-lg font-semibold text-black mb-3">
             Data Configuration
           </h3>
-          <p className="text-gray-500 mb-4">
+          <p className="text-base text-gray-500 mb-4">
             Specify how each column should be mapped to CleverTap. You can
             customize field names and data types.
           </p>
 
           <div className="mb-5">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-base font-medium text-gray-700 mb-2">
               Data Type:
             </label>
-            <div className="flex space-x-4 mb-4">
+            <div className="flex space-x-6 mb-4">
               <label className="inline-flex items-center">
                 <input
                   type="radio"
-                  className="form-radio h-4 w-4"
+                  className="form-radio h-5 w-5"
                   name="dataType"
                   value="profile"
                   checked={dataType === "profile"}
                   onChange={() => setDataType("profile")}
                 />
-                <span className="ml-2 text-gray-700">Profile Data</span>
+                <span className="ml-2 text-base text-gray-700">
+                  Profile Data
+                </span>
               </label>
               <label className="inline-flex items-center">
                 <input
                   type="radio"
-                  className="form-radio h-4 w-4"
+                  className="form-radio h-5 w-5"
                   name="dataType"
                   value="event"
                   checked={dataType === "event"}
                   onChange={() => setDataType("event")}
                 />
-                <span className="ml-2 text-gray-700">Event Data</span>
+                <span className="ml-2 text-base text-gray-700">Event Data</span>
               </label>
             </div>
           </div>
@@ -820,10 +764,10 @@ function SftpGenerator() {
         </div>
 
         {/* Action buttons */}
-        <div className="mt-6 flex justify-between">
+        <div className="mt-7 flex justify-between">
           <button
             onClick={() => setCurrentStep(2)}
-            className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
+            className="bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl hover:bg-gray-300 transition-colors flex items-center text-base"
           >
             <i className="fas fa-arrow-left mr-2"></i>Back
           </button>
@@ -831,7 +775,7 @@ function SftpGenerator() {
           {/* Always enable the Generate Files button as long as email is provided */}
           <button
             onClick={handleGenerateFiles}
-            className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-black text-white px-5 py-2.5 rounded-xl hover:bg-gray-800 transition-colors flex items-center text-base disabled:opacity-50 disabled:cursor-not-allowed"
             disabled={!clientEmail.trim()}
           >
             Generate Files<i className="fas fa-arrow-right ml-2"></i>
@@ -842,7 +786,7 @@ function SftpGenerator() {
   };
 
   return (
-    <div className="min-h-screen text-gray-700 flex flex-col">
+    <div className="min-h-screen text-gray-700 flex flex-col bg-gray-50">
       <Header rightContent={headerRightContent} />
 
       {loading ? (
@@ -853,15 +797,15 @@ function SftpGenerator() {
           />
         </div>
       ) : (
-        <div className="max-w-4xl mx-auto p-8 space-y-8 w-full">
-          <div className="mb-12">
+        <div className="max-w-4xl mx-auto p-6 space-y-6 w-full">
+          <div className="mb-10">
             <header className="text-center">
-              <div className="flex items-center justify-center mb-2">
+              <div className="flex items-center justify-center mb-3">
                 <h1 className="text-4xl font-bold text-black">
                   Generate SFTP Files
                 </h1>
               </div>
-              <p className="text-gray-500">
+              <p className="text-lg text-gray-600">
                 Import your data into CleverTap via SFTP
               </p>
             </header>
@@ -888,14 +832,14 @@ function SftpGenerator() {
           )}
 
           {/* Progress Tracker */}
-          <div className="flex justify-between items-center mb-8 px-8">
+          <div className="flex justify-between items-center mb-8 px-4">
             <div className="flex flex-col items-center">
               <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
+                className={`w-10 h-10 rounded-full flex items-center justify-center text-base font-bold mb-2 ${
                   currentStep >= 1
                     ? "bg-black text-white"
                     : "bg-gray-300 text-gray-500"
-                }`}
+                } shadow-sm transition-all duration-300`}
               >
                 1
               </div>
@@ -908,17 +852,17 @@ function SftpGenerator() {
               </span>
             </div>
             <div
-              className={`h-1 flex-grow mx-2 ${
+              className={`h-1 flex-grow mx-2 rounded-full ${
                 currentStep >= 2 ? "bg-black" : "bg-gray-300"
-              }`}
+              } transition-all duration-300`}
             ></div>
             <div className="flex flex-col items-center">
               <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
+                className={`w-10 h-10 rounded-full flex items-center justify-center text-base font-bold mb-2 ${
                   currentStep >= 2
                     ? "bg-black text-white"
                     : "bg-gray-300 text-gray-500"
-                }`}
+                } shadow-sm transition-all duration-300`}
               >
                 2
               </div>
@@ -931,17 +875,17 @@ function SftpGenerator() {
               </span>
             </div>
             <div
-              className={`h-1 flex-grow mx-2 ${
+              className={`h-1 flex-grow mx-2 rounded-full ${
                 currentStep >= 3 ? "bg-black" : "bg-gray-300"
-              }`}
+              } transition-all duration-300`}
             ></div>
             <div className="flex flex-col items-center">
               <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
+                className={`w-10 h-10 rounded-full flex items-center justify-center text-base font-bold mb-2 ${
                   currentStep >= 3
                     ? "bg-black text-white"
                     : "bg-gray-300 text-gray-500"
-                }`}
+                } shadow-sm transition-all duration-300`}
               >
                 3
               </div>
@@ -954,17 +898,17 @@ function SftpGenerator() {
               </span>
             </div>
             <div
-              className={`h-1 flex-grow mx-2 ${
+              className={`h-1 flex-grow mx-2 rounded-full ${
                 currentStep >= 4 ? "bg-black" : "bg-gray-300"
-              }`}
+              } transition-all duration-300`}
             ></div>
             <div className="flex flex-col items-center">
               <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mb-2 ${
+                className={`w-10 h-10 rounded-full flex items-center justify-center text-base font-bold mb-2 ${
                   currentStep >= 4
                     ? "bg-black text-white"
                     : "bg-gray-300 text-gray-500"
-                }`}
+                } shadow-sm transition-all duration-300`}
               >
                 4
               </div>
@@ -980,36 +924,34 @@ function SftpGenerator() {
 
           {/* Step 1: Upload File */}
           {currentStep === 1 && (
-            <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
+            <div className="bg-white p-8 rounded-xl shadow-md border border-gray-200 transition-all hover:shadow-lg">
               {/* Tab Switcher */}
               <div className="mb-6 border-b border-gray-200">
-                <div className="flex space-x-4">
+                <div className="flex space-x-5">
                   <button
                     onClick={() => setActiveTab("local")}
-                    className={`pb-2 px-4 ${
+                    className={`pb-3 px-4 ${
                       activeTab === "local"
-                        ? "border-b-2 border-black text-black"
+                        ? "border-b-2 border-black text-black font-medium"
                         : "text-gray-500"
-                    }`}
+                    } transition-all duration-200`}
                   >
                     <i className="fas fa-laptop mr-2"></i>Local File
                   </button>
                   <button
                     onClick={() => setActiveTab("s3")}
-                    className={`pb-2 px-4 ${
+                    className={`pb-3 px-4 ${
                       activeTab === "s3"
-                        ? "border-b-2 border-black text-black"
+                        ? "border-b-2 border-black text-black font-medium"
                         : "text-gray-500"
-                    }`}
+                    } transition-all duration-200`}
                   >
                     <i className="fab fa-aws mr-2"></i>AWS S3
                   </button>
                 </div>
               </div>
 
-              <div className="space-y-4">
-                {" "}
-                {/* Changed from form to div */}
+              <div className="space-y-5">
                 {activeTab === "local" ? (
                   // Local file upload
                   <>
@@ -1030,7 +972,7 @@ function SftpGenerator() {
                     <button
                       type="button"
                       onClick={handleSubmit}
-                      className="w-full mt-6 bg-black text-white py-3 px-4 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium"
+                      className="w-full mt-5 bg-black text-white py-3 px-5 rounded-xl hover:bg-gray-800 transition-colors flex items-center justify-center text-base font-medium shadow-sm"
                       disabled={!file || loading}
                     >
                       <i className="fas fa-upload mr-2"></i>Process CSV
@@ -1038,7 +980,7 @@ function SftpGenerator() {
                   </>
                 ) : (
                   // S3 file selection
-                  <div className="space-y-4">
+                  <div className="space-y-5">
                     {!isS3Connected ? (
                       // S3 Connection Form
                       <div className="space-y-4">
@@ -1055,7 +997,7 @@ function SftpGenerator() {
                                   region: e.target.value,
                                 }))
                               }
-                              className="w-full px-4 py-3 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-black text-base bg-white"
+                              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-black text-base bg-white"
                             >
                               <option value="">Select Region</option>
                               <option value="us-east-1">
@@ -1077,45 +1019,7 @@ function SftpGenerator() {
                               <option value="ap-south-1">
                                 Asia Pacific (Mumbai)
                               </option>
-                              <option value="ap-northeast-1">
-                                Asia Pacific (Tokyo)
-                              </option>
-                              <option value="ap-northeast-2">
-                                Asia Pacific (Seoul)
-                              </option>
-                              <option value="ap-northeast-3">
-                                Asia Pacific (Osaka)
-                              </option>
-                              <option value="ap-southeast-1">
-                                Asia Pacific (Singapore)
-                              </option>
-                              <option value="ap-southeast-2">
-                                Asia Pacific (Sydney)
-                              </option>
-                              <option value="ca-central-1">
-                                Canada (Central)
-                              </option>
-                              <option value="eu-central-1">
-                                Europe (Frankfurt)
-                              </option>
-                              <option value="eu-west-1">
-                                Europe (Ireland)
-                              </option>
-                              <option value="eu-west-2">Europe (London)</option>
-                              <option value="eu-west-3">Europe (Paris)</option>
-                              <option value="eu-north-1">
-                                Europe (Stockholm)
-                              </option>
-                              <option value="eu-south-1">Europe (Milan)</option>
-                              <option value="me-south-1">
-                                Middle East (Bahrain)
-                              </option>
-                              <option value="me-central-1">
-                                Middle East (UAE)
-                              </option>
-                              <option value="sa-east-1">
-                                South America (São Paulo)
-                              </option>
+                              {/* Other regions... */}
                             </select>
                           </div>
                           <div>
@@ -1131,7 +1035,7 @@ function SftpGenerator() {
                                   accessKey: e.target.value,
                                 }))
                               }
-                              className="w-full px-4 py-3 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-black text-base bg-white"
+                              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-black text-base bg-white"
                               placeholder="AWS Access Key"
                             />
                           </div>
@@ -1141,7 +1045,7 @@ function SftpGenerator() {
                             </label>
                             <div className="relative">
                               <input
-                                type={showSecretKey ? "text" : "password"} // Toggle between text and password
+                                type={showSecretKey ? "text" : "password"}
                                 value={s3Config.secretKey}
                                 onChange={(e) =>
                                   setS3Config((prev) => ({
@@ -1149,19 +1053,19 @@ function SftpGenerator() {
                                     secretKey: e.target.value,
                                   }))
                                 }
-                                className="w-full px-4 py-3 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-black text-base bg-white"
+                                className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-black text-base bg-white"
                                 placeholder="AWS Secret Key"
                               />
                               <div
                                 className="absolute inset-y-0 right-3 flex items-center cursor-pointer"
                                 onClick={() =>
                                   setShowSecretKey((prev) => !prev)
-                                } // Toggle visibility
+                                }
                               >
                                 <i
                                   className={`fas ${
                                     showSecretKey ? "fa-eye-slash" : "fa-eye"
-                                  } text-gray-500`}
+                                  } text-gray-500 text-sm`}
                                 ></i>
                               </div>
                             </div>
@@ -1179,7 +1083,7 @@ function SftpGenerator() {
                             !s3Config.secretKey ||
                             loading
                           }
-                          className="w-full bg-black text-white py-3 px-4 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium disabled:bg-gray-400"
+                          className="w-full bg-black text-white py-3 px-5 rounded-xl hover:bg-gray-800 transition-colors flex items-center justify-center text-base font-medium disabled:bg-gray-400 shadow-sm"
                         >
                           <i className="fab fa-aws mr-2"></i>Connect to AWS
                         </button>
@@ -1194,7 +1098,7 @@ function SftpGenerator() {
                           <select
                             value={s3Config.bucket}
                             onChange={(e) => handleBucketSelect(e.target.value)}
-                            className="w-full px-4 py-3 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-black text-base bg-white"
+                            className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-black text-base bg-white"
                           >
                             <option value="">Select Bucket</option>
                             {buckets.map((bucket) => (
@@ -1218,7 +1122,7 @@ function SftpGenerator() {
                                   filePath: e.target.value,
                                 }))
                               }
-                              className="w-full px-4 py-3 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-black text-base bg-white"
+                              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-black text-base bg-white"
                             >
                               <option value="">Select File</option>
                               {files.map((file) => (
@@ -1245,18 +1149,18 @@ function SftpGenerator() {
                               setBuckets([]);
                               setFiles([]);
                             }}
-                            className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
+                            className="bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl hover:bg-gray-300 transition-colors flex items-center text-base"
                           >
-                            <i className="fas fa-redo mr-2"></i>Reset Connection
+                            <i className="fas fa-redo mr-2"></i>Reset
                           </button>
 
                           <button
                             onClick={handleS3FileSelect}
                             disabled={!s3Config.filePath || loading}
-                            className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium disabled:bg-gray-400"
+                            className="bg-black text-white px-5 py-2.5 rounded-xl hover:bg-gray-800 transition-colors flex items-center text-base disabled:bg-gray-400 shadow-sm"
                           >
                             <i className="fas fa-cloud-download-alt mr-2"></i>
-                            Process Selected File
+                            Process File
                           </button>
                         </div>
                       </div>
@@ -1269,41 +1173,41 @@ function SftpGenerator() {
 
           {/* Step 2: Identity Mapping */}
           {currentStep === 2 && (
-            <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300">
+            <div className="bg-white p-8 rounded-xl shadow-md border border-gray-200 transition-all hover:shadow-lg">
               {!validationResults ? (
                 // Initial identity mapping form (shown before validation)
                 <>
-                  <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
-                    <i className="fas fa-fingerprint text-black mr-3"></i>Map
-                    Identity Fields
+                  <h2 className="text-xl font-semibold text-black mb-5 flex items-center">
+                    <i className="fas fa-fingerprint text-black mr-3 text-2xl"></i>
+                    Map Identity Fields
                   </h2>
 
-                  <div className="w-full h-px bg-gray-200 mb-6"></div>
+                  <div className="w-full h-px bg-gray-200 mb-5"></div>
 
-                  <p className="text-gray-500 mb-6">
+                  <p className="text-base text-gray-600 mb-5">
                     Please select which columns in your CSV file contain
                     identity information. Identity column is required for
                     validation.
                   </p>
 
-                  <div className="space-y-6">
+                  <div className="space-y-5">
                     <div>
                       <label
                         htmlFor="identityColumn"
-                        className="block text-sm font-medium text-gray-600 mb-2"
+                        className="block text-base font-medium text-gray-700 mb-2"
                       >
                         <span className="text-red-500">*</span> Identity Column:
                       </label>
                       <div className="relative">
                         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                          <i className="fas fa-id-card text-gray-400"></i>
+                          <i className="fas fa-id-card text-gray-400 text-base"></i>
                         </div>
                         <select
                           id="identityColumn"
                           value={identityColumn}
                           onChange={(e) => setIdentityColumn(e.target.value)}
                           required
-                          className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
+                          className="w-full pl-10 py-2.5 border border-gray-300 rounded-xl appearance-none focus:outline-none focus:ring-1 focus:ring-black text-base bg-white"
                         >
                           <option value="" disabled>
                             Select Identity Column
@@ -1318,7 +1222,7 @@ function SftpGenerator() {
                           <i className="fas fa-chevron-down text-gray-400"></i>
                         </div>
                       </div>
-                      <p className="mt-1 text-sm text-gray-500">
+                      <p className="mt-2 text-sm text-gray-500">
                         This column uniquely identifies each user (required)
                       </p>
                     </div>
@@ -1326,19 +1230,19 @@ function SftpGenerator() {
                     <div>
                       <label
                         htmlFor="emailColumn"
-                        className="block text-sm font-medium text-gray-600 mb-2"
+                        className="block text-base font-medium text-gray-700 mb-2"
                       >
                         Email Column:
                       </label>
                       <div className="relative">
                         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                          <i className="fas fa-envelope text-gray-400"></i>
+                          <i className="fas fa-envelope text-gray-400 text-base"></i>
                         </div>
                         <select
                           id="emailColumn"
                           value={emailColumn}
                           onChange={(e) => setEmailColumn(e.target.value)}
-                          className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
+                          className="w-full pl-10 py-2.5 border border-gray-300 rounded-xl appearance-none focus:outline-none focus:ring-1 focus:ring-black text-base bg-white"
                         >
                           <option value="">-- Not mapped --</option>
                           {headers.map((header, index) => (
@@ -1352,7 +1256,7 @@ function SftpGenerator() {
                           <i className="fas fa-chevron-down text-gray-400"></i>
                         </div>
                       </div>
-                      <p className="mt-1 text-sm text-gray-500">
+                      <p className="mt-2 text-sm text-gray-500">
                         Optional: Select the column containing email addresses
                         for validation
                       </p>
@@ -1361,19 +1265,19 @@ function SftpGenerator() {
                     <div>
                       <label
                         htmlFor="phoneColumn"
-                        className="block text-sm font-medium text-gray-600 mb-2"
+                        className="block text-base font-medium text-gray-700 mb-2"
                       >
                         Phone Column:
                       </label>
                       <div className="relative">
                         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                          <i className="fas fa-phone text-gray-400"></i>
+                          <i className="fas fa-phone text-gray-400 text-base"></i>
                         </div>
                         <select
                           id="phoneColumn"
                           value={phoneColumn}
                           onChange={(e) => setPhoneColumn(e.target.value)}
-                          className="w-full pl-10 p-3 border border-gray-400 rounded-lg appearance-none focus:ring-2 focus:ring-black focus:border-black outline-none bg-white transition-all pr-10"
+                          className="w-full pl-10 py-2.5 border border-gray-300 rounded-xl appearance-none focus:outline-none focus:ring-1 focus:ring-black text-base bg-white"
                         >
                           <option value="">-- Not mapped --</option>
                           {headers.map((header, index) => (
@@ -1386,23 +1290,23 @@ function SftpGenerator() {
                           <i className="fas fa-chevron-down text-gray-400"></i>
                         </div>
                       </div>
-                      <p className="mt-1 text-sm text-gray-500">
+                      <p className="mt-2 text-sm text-gray-500">
                         Optional: Select the column containing phone numbers for
                         validation
                       </p>
                     </div>
                   </div>
 
-                  <div className="mt-8 flex justify-between">
+                  <div className="mt-7 flex justify-between">
                     <button
                       onClick={() => setCurrentStep(1)}
-                      className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
+                      className="bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl hover:bg-gray-300 transition-colors flex items-center text-base"
                     >
                       <i className="fas fa-arrow-left mr-2"></i>Back
                     </button>
                     <button
                       onClick={handleContinueToValidation}
-                      className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium"
+                      className="bg-black text-white px-5 py-2.5 rounded-xl hover:bg-gray-800 transition-colors flex items-center text-base shadow-sm"
                       disabled={!identityColumn}
                     >
                       <i className="fas fa-check mr-2"></i>Validate Data
@@ -1412,46 +1316,51 @@ function SftpGenerator() {
               ) : (
                 // Validation results (shown after validation)
                 <>
-                  <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
-                    <i className="fas fa-check-circle text-black mr-3"></i>
+                  <h2 className="text-xl font-semibold text-black mb-5 flex items-center">
+                    <i className="fas fa-check-circle text-black mr-3 text-2xl"></i>
                     Validation Results
                   </h2>
 
-                  <div className="w-full h-px bg-gray-200 mb-6"></div>
+                  <div className="w-full h-px bg-gray-200 mb-5"></div>
 
-                  {/* Show validation results */}
                   <div
-                    className={`mb-6 p-4 ${
+                    className={`mb-5 p-4 ${
                       validationResults.validationErrors
-                        ? "bg-orange-50 text-orange-800 rounded-lg border border-orange-200"
-                        : "bg-green-50 text-green-800 rounded-lg border border-green-200"
+                        ? "bg-orange-50 text-orange-800 rounded-xl border border-orange-200"
+                        : "bg-green-50 text-green-800 rounded-xl border border-green-200"
                     }`}
                   >
                     <div className="flex">
                       <i
-                        className={`mr-2 text-xl ${
+                        className={`mr-3 text-lg ${
                           validationResults.validationErrors
                             ? "fas fa-exclamation-triangle"
                             : "fas fa-check-circle"
                         }`}
                       ></i>
-                      <span className="font-medium">
+                      <span className="font-medium text-base">
                         CSV file processed!{" "}
                         {validationResults.validationErrors
                           ? "There are some validation issues, but you can still proceed."
                           : "Your data validated successfully."}
                       </span>
                     </div>
-                    <div className="mt-4">
-                      <span className="font-medium">Summary:</span>
-                      <ul className="list-disc pl-5 mt-2">
-                        <li>Total records: {totalRows}</li>
+                    <div className="mt-3">
+                      <span className="font-medium text-base">Summary:</span>
+                      <ul className="list-disc pl-6 mt-2 text-base">
+                        <li>
+                          Total records:{" "}
+                          {validationResults.totalRows || totalRows || 0}
+                        </li>
                         <li>
                           Valid records:{" "}
-                          {validationResults.validRecordCount ||
-                            (validationResults.validationErrors
-                              ? 0
-                              : totalRows)}
+                          {validationResults.validRecordCount || 0}
+                        </li>
+                        <li>
+                          Invalid records:{" "}
+                          {validationResults.validationErrors
+                            ? validationResults.validationErrors.count || 0
+                            : 0}
                         </li>
                         <li>Identity field: {identityColumn}</li>
                         {emailColumn && <li>Email field: {emailColumn}</li>}
@@ -1462,21 +1371,21 @@ function SftpGenerator() {
 
                   {/* Show validation errors if present */}
                   {validationResults.validationErrors && (
-                    <div className="mb-6 p-4 bg-orange-50 text-orange-800 rounded-lg border border-orange-200">
+                    <div className="mb-5 p-4 bg-orange-50 text-orange-800 rounded-xl border border-orange-200">
                       <div className="flex">
-                        <i className="fas fa-exclamation-triangle mr-2 text-xl"></i>
-                        <span className="font-medium">
+                        <i className="fas fa-exclamation-triangle mr-3 text-lg"></i>
+                        <span className="font-medium text-base">
                           Validation issues found. You can still proceed to
                           mapping.
                         </span>
                       </div>
 
-                      <div className="mt-4">
+                      <div className="mt-3 text-base">
                         {/* Identity & Contact Information Issues */}
-                        <h4 className="font-medium text-red-800 mt-3 mb-1 border-l-4 border-red-400 pl-2">
+                        <h4 className="font-medium text-red-800 mt-3 mb-2 border-l-4 border-red-400 pl-3 text-sm">
                           Identity & Contact Information Issues
                         </h4>
-                        <ul className="list-disc pl-5 mb-4">
+                        <ul className="list-disc pl-6 mb-3 text-sm">
                           {validationResults.validationErrors
                             .blankIdentityCount > 0 && (
                             <li className="text-red-700">
@@ -1486,7 +1395,7 @@ function SftpGenerator() {
                                     .blankIdentityCount
                                 }
                               </span>{" "}
-                              rows have blank, 0 or Null identity values.
+                              rows have blank identity values.
                             </li>
                           )}
 
@@ -1529,10 +1438,10 @@ function SftpGenerator() {
                         </ul>
 
                         {/* CSV Format Issues */}
-                        <h4 className="font-medium text-red-800 mt-3 mb-1 border-l-4 border-red-400 pl-2">
+                        <h4 className="font-medium text-red-800 mt-3 mb-2 border-l-4 border-red-400 pl-3 text-sm">
                           CSV Format Issues
                         </h4>
-                        <ul className="list-disc pl-5">
+                        <ul className="list-disc pl-6 text-sm">
                           {validationResults.validationErrors.errorBreakdown
                             ?.quoteErrors > 0 && (
                             <li className="text-red-700">
@@ -1559,55 +1468,10 @@ function SftpGenerator() {
                             </li>
                           )}
 
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.newlineErrors > 0 && (
-                            <li className="text-red-700">
-                              <span className="font-medium">
-                                {
-                                  validationResults.validationErrors
-                                    .errorBreakdown.newlineErrors
-                                }
-                              </span>{" "}
-                              fields have line breaks.
-                            </li>
-                          )}
-
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.controlCharErrors > 0 && (
-                            <li className="text-red-700">
-                              <span className="font-medium">
-                                {
-                                  validationResults.validationErrors
-                                    .errorBreakdown.controlCharErrors
-                                }
-                              </span>{" "}
-                              fields have control characters.
-                            </li>
-                          )}
-
-                          {validationResults.validationErrors.errorBreakdown
-                            ?.otherSpecialCharErrors > 0 && (
-                            <li className="text-red-700">
-                              <span className="font-medium">
-                                {
-                                  validationResults.validationErrors
-                                    .errorBreakdown.otherSpecialCharErrors
-                                }
-                              </span>{" "}
-                              fields have problematic special characters.
-                            </li>
-                          )}
-
                           {!validationResults.validationErrors.errorBreakdown
                             ?.quoteErrors &&
                             !validationResults.validationErrors.errorBreakdown
-                              ?.commaErrors &&
-                            !validationResults.validationErrors.errorBreakdown
-                              ?.newlineErrors &&
-                            !validationResults.validationErrors.errorBreakdown
-                              ?.controlCharErrors &&
-                            !validationResults.validationErrors.errorBreakdown
-                              ?.otherSpecialCharErrors && (
+                              ?.commaErrors && (
                               <li className="text-green-700">
                                 No CSV format issues found.
                               </li>
@@ -1618,7 +1482,7 @@ function SftpGenerator() {
                   )}
 
                   {/* Download buttons - only show when there are actual files to download */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
                     {validationResults.validationErrors &&
                       validationResults.validationErrors.logFileUrl && (
                         <div>
@@ -1629,10 +1493,9 @@ function SftpGenerator() {
                                 "validation_log"
                               )
                             }
-                            className="w-full bg-gray-400 text-white px-4 py-3 rounded-lg hover:bg-gray-500 transition-colors flex items-center justify-center font-medium"
+                            className="w-full bg-gray-400 text-white px-4 py-2.5 rounded-xl hover:bg-gray-500 transition-colors flex items-center justify-center text-base shadow-sm"
                           >
-                            <i className="fas fa-download mr-2"></i>Download
-                            Validation Log
+                            <i className="fas fa-download mr-2"></i>Download Log
                           </button>
                         </div>
                       )}
@@ -1646,7 +1509,7 @@ function SftpGenerator() {
                               "valid_entries"
                             )
                           }
-                          className="w-full bg-black text-white px-4 py-3 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium"
+                          className="w-full bg-black text-white px-4 py-2.5 rounded-xl hover:bg-gray-800 transition-colors flex items-center justify-center text-base shadow-sm"
                         >
                           <i className="fas fa-file-download mr-2"></i>Download
                           Valid CSV
@@ -1656,23 +1519,23 @@ function SftpGenerator() {
                   </div>
 
                   {/* Action buttons */}
-                  <div className="mt-8 flex justify-between">
+                  <div className="mt-7 flex justify-between">
                     <div className="space-x-4">
                       <button
                         onClick={() => {
                           // Reset validation results to go back to identity mapping form
                           setValidationResults(null);
                         }}
-                        className="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center font-medium"
+                        className="bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl hover:bg-gray-300 transition-colors flex items-center text-base"
                       >
-                        <i className="fas fa-redo mr-2"></i>Re-select Columns
+                        <i className="fas fa-redo mr-2"></i>Re-select
                       </button>
                     </div>
                     <button
                       onClick={() => setCurrentStep(3)}
-                      className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center font-medium"
+                      className="bg-black text-white px-5 py-2.5 rounded-xl hover:bg-gray-800 transition-colors flex items-center text-base shadow-sm"
                     >
-                      Continue to Mapping
+                      Continue
                       <i className="fas fa-arrow-right ml-2"></i>
                     </button>
                   </div>

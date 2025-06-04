@@ -20,7 +20,6 @@ function JsonConverter() {
   const [downloadFilename, setDownloadFilename] = useState("");
   const [errorMessage, setErrorMessage] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
-  // const [clientId] = useState(`client_${Date.now()}`);
 
   const [clientEmail] = useState(localStorage.getItem("email") || "");
   const [accountName] = useState(localStorage.getItem("accountName"));
@@ -31,39 +30,37 @@ function JsonConverter() {
     <div className="flex items-center space-x-4">
       <button
         onClick={() => navigate("/dashboard")}
-        className="border border-black text-black px-4 py-1.5 rounded text-sm font-medium hover:bg-gray-50 transition"
+        className="border border-black text-black px-4 py-2 rounded-xl text-sm font-medium hover:bg-gray-50 transition-all duration-200"
       >
         Back to Dashboard
       </button>
 
       <Dropdown
         trigger={
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-black font-bold">
+          <div className="flex items-center space-x-2 cursor-pointer">
+            <div className="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center text-black font-bold text-base shadow-sm">
               {clientEmail.charAt(0).toUpperCase()}
             </div>
             <i className="fas fa-chevron-down text-gray-500"></i>
           </div>
         }
       >
-        <ul className="py-2">
-          <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
+        <ul className="py-2 rounded-xl shadow-lg">
+          <li className="px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
             <i className="fas fa-user mr-2 text-gray-500"></i>
             <span className="font-medium">Account:</span> {accountName}
           </li>
-          <li className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
+          <li className="px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 cursor-default">
             <i className="fas fa-envelope mr-2 text-gray-500"></i>
             <span className="font-medium">Email:</span> {clientEmail}
           </li>
           <hr className="my-2 border-gray-200" />
 
           <li
-            className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-black cursor-pointer"
+            className="px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 hover:text-black cursor-pointer"
             onClick={() => {
-              // Clear user data from localStorage
               localStorage.removeItem("accountName");
               localStorage.removeItem("email");
-
               navigate("/login");
             }}
           >
@@ -91,19 +88,6 @@ function JsonConverter() {
     setConvertDisabled(!selectedFile);
   }, []);
 
-  // Connect to SSE for progress updates
-  useEffect(() => {
-    // Store the current ref value in a variable inside the effect
-    const eventSource = eventSourceRef.current;
-
-    // Clean up event source on unmount
-    return () => {
-      if (eventSource) {
-        eventSource.close();
-      }
-    };
-  }, []);
-
   // Handle JSON file conversion
   const handleJsonConversion = async () => {
     if (!file) {
@@ -121,33 +105,66 @@ function JsonConverter() {
       setProgress(0);
       setStatus("Starting conversion...");
 
+      // Clean up any existing event source
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+
       // Create form data for file upload
       const formData = new FormData();
       formData.append("jsonFile", file);
 
+      // Set initial progress for better UX
       setStatus("Uploading file...");
       setProgress(20);
 
-      // Use your existing API service
+      // Show intermediate progress steps to improve user experience
+      const progressInterval = setInterval(() => {
+        setProgress((prev) => {
+          // Don't go beyond 90% until we get actual completion
+          if (prev < 90) {
+            return prev + 5;
+          }
+          return prev;
+        });
+
+        if (progress >= 30 && progress < 50) {
+          setStatus("Processing JSON data...");
+        } else if (progress >= 50 && progress < 70) {
+          setStatus("Converting to CSV format...");
+        } else if (progress >= 70 && progress < 90) {
+          setStatus("Storing in cloud...");
+        }
+      }, 2000);
+
+      // Use the API service without SSE
       const response = await convertJsonToCsv(formData);
 
+      // Clear the progress interval
+      clearInterval(progressInterval);
+
+      // Set to 100% when complete
       setProgress(100);
       setStatus("Conversion completed!");
 
       // Handle the response
       if (response.success) {
-        // Create download URL for the converted file
+        // Use the download URL provided by the backend
         const apiUrl =
           process.env.REACT_APP_API_URL || "http://localhost:5000/api";
-        const downloadUrl = `${apiUrl.replace("/api", "")}/downloads/${
-          response.filename
-        }`;
+
+        // Construct the download URL correctly
+        const downloadUrl = `${apiUrl}${response.downloadUrl}`;
+
+        console.log("Download URL:", downloadUrl); // For debugging
+
         setDownloadUrl(downloadUrl);
         setDownloadFilename(response.filename);
 
         // Show success
         setShowResult(true);
-        showSuccessMessage("File converted successfully!");
+        showSuccessMessage("File converted successfully and stored in cloud!");
       } else {
         throw new Error(response.error || "Error converting file");
       }
@@ -180,31 +197,29 @@ function JsonConverter() {
   }, [downloadUrl]);
 
   return (
-    <div className="min-h-screen bg-white text-gray-700 flex flex-col">
+    <div className="min-h-screen bg-gray-50 text-gray-700 flex flex-col">
       {/* Header */}
       <Header rightContent={headerRightContent} />
-      <div className="max-w-4xl mx-auto p-8 space-y-8 w-full">
-        <div className="mb-12">
-          <header className="text-center">
-            <div className="flex items-center justify-center mb-2">
-              <h1 className="text-4xl font-bold text-black">
+      <div className="flex-grow flex items-center justify-center py-10 px-6">
+        <div className="max-w-4xl mx-auto w-full">
+          <div className="mb-10">
+            <header className="text-center">
+              <h1 className="text-4xl font-bold text-black mb-3">
                 Convert JSON to CSV
               </h1>
-            </div>
-            <p className="text-gray-500">
-              Upload your JSON file and convert it to CSV format.
-            </p>
-          </header>
-        </div>
+              <p className="text-lg text-gray-600">
+                Upload your JSON file and convert it to CSV format with ease.
+              </p>
+            </header>
+          </div>
 
-        <div className="max-w-4xl mx-auto p-8 space-y-8 w-full">
-          <div className="bg-white p-8 rounded-lg shadow-lg border border-gray-300 transition-all">
-            <h2 className="text-2xl font-semibold text-black mb-6 flex items-center">
-              <i className="fas fa-file-upload text-black mr-3"></i>Upload JSON
-              File
+          <div className="bg-white p-8 rounded-xl shadow-md border border-gray-200 transition-all hover:shadow-lg">
+            <h2 className="text-xl font-semibold text-black mb-6 flex items-center">
+              <i className="fas fa-file-upload text-black mr-3 text-2xl"></i>
+              Upload JSON File
             </h2>
 
-            {/* Replace the custom error and success messages with AlertMessage component */}
+            {/* Alert messages */}
             {errorMessage && (
               <AlertMessage
                 type="error"
@@ -224,7 +239,7 @@ function JsonConverter() {
             )}
 
             <div className="space-y-6">
-              {/* Replace the old file upload with our new component */}
+              {/* File uploader */}
               <FileUploader
                 accept=".json,application/json"
                 maxSize={5}
@@ -236,7 +251,7 @@ function JsonConverter() {
 
               <button
                 onClick={handleJsonConversion}
-                className={`w-full bg-gray-800 text-white py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center font-medium ${
+                className={`w-full bg-black text-white py-3.5 px-6 rounded-xl hover:bg-gray-800 transition-all duration-200 flex items-center justify-center font-medium text-base shadow-sm ${
                   convertDisabled ? "opacity-50 cursor-not-allowed" : ""
                 }`}
                 disabled={convertDisabled}
@@ -245,40 +260,40 @@ function JsonConverter() {
               </button>
 
               {showProgress && (
-                <div className="space-y-4">
-                  <h3 className="font-semibold text-gray-800">
+                <div className="space-y-5 mt-7 bg-gray-50 p-6 rounded-xl border border-gray-200 shadow-sm">
+                  <h3 className="font-medium text-gray-800 text-lg">
                     Conversion Progress
                   </h3>
-                  <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                  <div className="w-full bg-gray-200 rounded-full h-5 overflow-hidden">
                     <div
-                      className="h-full bg-gray-800 text-xs text-white text-center leading-4"
+                      className="h-full bg-black text-xs text-white text-center leading-relaxed transition-all duration-300 ease-out"
                       style={{ width: `${progress}%` }}
                     >
                       {`${Math.round(progress)}%`}
                     </div>
                   </div>
-                  <div className="text-sm text-gray-600 italic">{status}</div>
+                  <div className="text-base text-gray-600 italic">{status}</div>
                 </div>
               )}
 
               {showResult && (
-                <div className="space-y-4">
-                  <h3 className="font-semibold text-gray-800">
+                <div className="space-y-5 mt-7 bg-gray-50 p-6 rounded-xl border border-gray-200 shadow-sm">
+                  <h3 className="font-medium text-gray-800 text-lg">
                     Conversion Complete
                   </h3>
-                  <p className="text-gray-600">
+                  <p className="text-gray-600 text-base">
                     Your file has been successfully converted!
                   </p>
                   <a
                     href={downloadUrl}
                     download={downloadFilename}
-                    className="block w-full bg-gray-800 text-white text-center py-3 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center font-medium"
+                    className="block w-full bg-black text-white text-center py-3 rounded-xl hover:bg-gray-800 transition-all duration-200 flex items-center justify-center font-medium text-base shadow-sm"
                   >
                     <i className="fas fa-download mr-2"></i>Download CSV
                   </a>
                   <button
                     onClick={handleClearFile}
-                    className="block w-full border border-gray-400 text-gray-700 text-center py-2 rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center font-medium mt-2"
+                    className="block w-full border border-gray-300 text-gray-700 text-center py-3 rounded-xl hover:bg-gray-100 transition-all duration-200 flex items-center justify-center font-medium text-base mt-3"
                   >
                     <i className="fas fa-redo mr-2"></i>Convert Another File
                   </button>
