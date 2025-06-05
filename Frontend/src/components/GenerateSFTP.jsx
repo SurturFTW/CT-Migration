@@ -1382,10 +1382,10 @@ function SftpGenerator() {
 
                       <div className="mt-3 text-base">
                         {/* Identity & Contact Information Issues */}
-                        <h4 className="font-medium text-red-800 mt-3 mb-2 border-l-4 border-red-400 pl-3 text-sm">
+                        <h4 className="font-medium text-red-800 mt-3 mb-2 border-l-4 border-red-400 pl-3 text-base">
                           Identity & Contact Information Issues
                         </h4>
-                        <ul className="list-disc pl-6 mb-3 text-sm">
+                        <ul className="list-disc pl-6 mb-3 text-base">
                           {validationResults.validationErrors
                             .blankIdentityCount > 0 && (
                             <li className="text-red-700">
@@ -1395,7 +1395,7 @@ function SftpGenerator() {
                                     .blankIdentityCount
                                 }
                               </span>{" "}
-                              rows have blank identity values.
+                              rows have 0, blank or null identity values.
                             </li>
                           )}
 
@@ -1438,10 +1438,10 @@ function SftpGenerator() {
                         </ul>
 
                         {/* CSV Format Issues */}
-                        <h4 className="font-medium text-red-800 mt-3 mb-2 border-l-4 border-red-400 pl-3 text-sm">
+                        <h4 className="font-medium text-red-800 mt-3 mb-2 border-l-4 border-red-400 pl-3 text-base">
                           CSV Format Issues
                         </h4>
-                        <ul className="list-disc pl-6 text-sm">
+                        <ul className="list-disc pl-6 text-base">
                           {validationResults.validationErrors.errorBreakdown
                             ?.quoteErrors > 0 && (
                             <li className="text-red-700">

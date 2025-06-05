@@ -224,7 +224,6 @@ const ColumnMapping = ({
                         <option value="integer">Integer</option>
                         <option value="float">Float</option>
                         <option value="boolean">Boolean</option>
-                        <option value="date">Date</option>
                       </select>
                       <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
                         <i className="fas fa-chevron-down text-gray-400"></i>

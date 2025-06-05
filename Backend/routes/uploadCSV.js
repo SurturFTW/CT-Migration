@@ -41,6 +41,9 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 * 1024 }, // 5GB limit
 });
 
+// Fixed chunk size
+const CHUNK_SIZE = 50000;
+
 router.post("/upload_csv", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
@@ -61,7 +64,6 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
       ContentType: req.file.mimetype || "text/csv",
     };
 
-    const s3UploadResult = await s3.upload(uploadParams).promise();
     console.log("File uploaded to S3:", { originalName });
 
     // Process headers and count rows via streaming
@@ -126,6 +128,7 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
   const identityColumn = req.body.identityColumn;
   const emailColumn = req.body.emailColumn;
   const phoneColumn = req.body.phoneColumn;
+  const startTime = Date.now();
 
   if (!identityColumn) {
     return res.status(400).json({ error: "Identity column is required" });
@@ -202,142 +205,216 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
     logCsvStream.pipe(logStream);
     validCsvStream.pipe(validStream);
 
-    // Process the CSV data by streaming from disk
+    // First, read and extract headers
     await new Promise((resolve, reject) => {
+      let headerProcessed = false;
+
       fs.createReadStream(filePath)
-        .pipe(
-          csv.parse({
-            headers: (headers) => {
-              return headers.map((header) => {
-                if (!header) return header;
-                const count = headerMap.get(header) || 0;
-                headerMap.set(header, count + 1);
-                return count > 0 ? `${header}_${count}` : header;
-              });
-            },
-            renameHeaders: true,
-          })
-        )
-        .on("headers", (headers) => {
-          columns = headers;
-          logCsvStream.write(["Row Number", ...columns, "Error Description"]);
-          validCsvStream.write(columns);
-        })
-
+        .pipe(csv.parse())
         .on("data", (row) => {
-          const errors = [];
-          let rowNumber = totalInvalidEntries + validRecordCount + 1;
+          if (!headerProcessed) {
+            columns = row.map((header, index) => {
+              if (!header) return `Column_${index}`;
+              const count = headerMap.get(header) || 0;
+              headerMap.set(header, count + 1);
+              return count > 0 ? `${header}_${count}` : header;
+            });
 
-          // Create a copy of the row for potential modifications
-          const processedRow = { ...row };
+            // Write headers to output streams
+            logCsvStream.write(["Row Number", ...columns, "Error Description"]);
+            validCsvStream.write(columns);
 
-          // First, check if the identity column value is blank or undefined
-          const identityValue = row[identityColumn];
-          if (
-            !identityValue ||
-            String(identityValue).trim() === "" ||
-            String(identityValue).toLowerCase().trim() === "null" ||
-            String(identityValue).trim() === "0" ||
-            Number(identityValue) === 0
-          ) {
-            errors.push(
-              `Field "${identityColumn}": Identity value is blank, missing, null, or zero. This field is required and must have a valid value.`
-            );
-            errorCounts.blankIdentities++;
-            blankIdentityCount++;
+            headerProcessed = true;
+            resolve();
+          }
+        })
+        .on("error", reject);
+    });
+
+    // Simple function to process a chunk of rows
+    const processChunk = (rows, startIndex) => {
+      const valid = [];
+      const invalid = [];
+      let chunkValidCount = 0;
+      let chunkInvalidCount = 0;
+      let chunkBlankIdentityCount = 0;
+
+      const chunkErrorCounts = {
+        quoteErrors: 0,
+        commaErrors: 0,
+        newlineErrors: 0,
+        controlCharErrors: 0,
+        otherSpecialCharErrors: 0,
+        emailErrors: 0,
+        phoneErrors: 0,
+        datetimeConversions: 0,
+        blankIdentities: 0,
+      };
+
+      for (let i = 0; i < rows.length; i++) {
+        const rowArray = rows[i];
+        const rowNumber = startIndex + i + 1; // +1 to account for header
+
+        // Convert array to object using column names
+        const row = {};
+        columns.forEach((col, idx) => {
+          row[col] = rowArray[idx] !== undefined ? rowArray[idx] : null;
+        });
+
+        const errors = [];
+        const processedRow = { ...row };
+
+        // Check if the identity column value is blank or undefined
+        const identityValue = row[identityColumn];
+        if (
+          !identityValue ||
+          String(identityValue).trim() === "" ||
+          String(identityValue).toLowerCase().trim() === "null" ||
+          String(identityValue).trim() === "0" ||
+          Number(identityValue) === 0
+        ) {
+          errors.push(
+            `Field "${identityColumn}": Identity value is blank, missing, null, or zero. This field is required and must have a valid value.`
+          );
+          chunkErrorCounts.blankIdentities++;
+          chunkBlankIdentityCount++;
+        }
+
+        // Validate each field in the row
+        Object.entries(processedRow).forEach(([key, value]) => {
+          // Skip null or undefined values
+          if (value === null || value === undefined) {
+            return;
           }
 
-          // Validate each field in the row
-          Object.entries(processedRow).forEach(([key, value]) => {
-            // Skip null or undefined values
-            if (value === null || value === undefined) {
-              return;
+          // Convert value to string
+          const strValue = String(value);
+
+          // Special case for JSON values
+          let isJsonValue = false;
+          if (
+            strValue.trim().startsWith("{") &&
+            strValue.trim().endsWith("}")
+          ) {
+            try {
+              JSON.parse(strValue);
+              isJsonValue = true;
+            } catch (e) {
+              // Not valid JSON, continue with normal validation
             }
+          }
 
-            // Convert value to string to handle non-string values (like numbers)
-            const strValue = String(value);
+          if (isJsonValue) return;
 
-            // Special case for JSON values - try to parse as JSON first
-            let isJsonValue = false;
-            if (
-              strValue.trim().startsWith("{") &&
-              strValue.trim().endsWith("}")
-            ) {
-              try {
-                JSON.parse(strValue);
-                isJsonValue = true;
-              } catch (e) {
-                // Not valid JSON, continue with normal validation
-              }
+          // Attempt datetime conversion
+          const convertedValue = convertToEpoch(strValue);
+          if (convertedValue !== strValue) {
+            processedRow[key] = convertedValue;
+            chunkErrorCounts.datetimeConversions++;
+          }
+
+          // Validate special characters
+          const specialCharIssues = validateSpecialChars(strValue);
+          if (specialCharIssues) {
+            errors.push(`Field "${key}": ${specialCharIssues}`);
+
+            if (specialCharIssues.includes("quote"))
+              chunkErrorCounts.quoteErrors++;
+            if (specialCharIssues.includes("comma"))
+              chunkErrorCounts.commaErrors++;
+            if (specialCharIssues.includes("newline"))
+              chunkErrorCounts.newlineErrors++;
+            if (specialCharIssues.includes("control"))
+              chunkErrorCounts.controlCharErrors++;
+            if (specialCharIssues.includes("special characters"))
+              chunkErrorCounts.otherSpecialCharErrors++;
+          }
+
+          // Validate email
+          if (emailColumn && key === emailColumn) {
+            const emailError = validateEmail(strValue);
+            if (emailError) {
+              errors.push(`Field "${key}": ${emailError}`);
+              chunkErrorCounts.emailErrors++;
             }
+          }
 
-            // Skip validation for valid JSON values
-            if (isJsonValue) {
-              return;
+          // Validate phone
+          if (phoneColumn && key === phoneColumn) {
+            const phoneError = validatePhoneNumber(strValue);
+            if (phoneError) {
+              errors.push(`Field "${key}": ${phoneError}`);
+              chunkErrorCounts.phoneErrors++;
             }
+          }
+        });
 
-            // Attempt datetime conversion if it's a string
-            const convertedValue = convertToEpoch(strValue);
-            if (convertedValue !== strValue) {
-              processedRow[key] = convertedValue;
-              errorCounts.datetimeConversions++;
-            }
-
-            // Validate special characters for all fields
-            const specialCharIssues = validateSpecialChars(strValue);
-            if (specialCharIssues) {
-              errors.push(`Field "${key}": ${specialCharIssues}`);
-
-              // Update specific error counters based on the issue
-              if (specialCharIssues.includes("quote"))
-                errorCounts.quoteErrors++;
-              if (specialCharIssues.includes("comma"))
-                errorCounts.commaErrors++;
-              if (specialCharIssues.includes("newline"))
-                errorCounts.newlineErrors++;
-              if (specialCharIssues.includes("control"))
-                errorCounts.controlCharErrors++;
-              if (specialCharIssues.includes("special characters"))
-                errorCounts.otherSpecialCharErrors++;
-            }
-
-            // Validate email only for the user-specified email column
-            if (emailColumn && key === emailColumn) {
-              const emailError = validateEmail(strValue);
-              if (emailError) {
-                errors.push(`Field "${key}": ${emailError}`);
-                errorCounts.emailErrors++;
-              }
-            }
-
-            // Validate phone only for the user-specified phone column
-            if (phoneColumn && key === phoneColumn) {
-              const phoneError = validatePhoneNumber(strValue);
-              if (phoneError) {
-                errors.push(`Field "${key}": ${phoneError}`);
-                errorCounts.phoneErrors++;
-              }
-            }
+        if (errors.length > 0) {
+          chunkInvalidCount++;
+          invalid.push({
+            rowNumber,
+            row: processedRow,
+            errors: errors.join("; "),
           });
+        } else {
+          chunkValidCount++;
+          valid.push(processedRow);
+        }
+      }
 
-          if (errors.length > 0) {
-            totalInvalidEntries++;
-            // Write invalid row with error description
-            const invalidRow = [
-              rowNumber,
-              ...Object.values(processedRow),
-              errors.join("; "),
-            ];
-            logCsvStream.write(invalidRow);
-          } else {
-            // Write valid row to the valid entries file
-            validCsvStream.write(processedRow);
-            validRecordCount++;
+      // Update global counters
+      validRecordCount += chunkValidCount;
+      totalInvalidEntries += chunkInvalidCount;
+      blankIdentityCount += chunkBlankIdentityCount;
+
+      // Update global error counts
+      Object.keys(chunkErrorCounts).forEach((key) => {
+        errorCounts[key] += chunkErrorCounts[key];
+      });
+
+      // Write results to streams
+      valid.forEach((row) => {
+        validCsvStream.write(row);
+      });
+
+      invalid.forEach(({ rowNumber, row, errors }) => {
+        const rowArray = columns.map((col) => row[col]);
+        logCsvStream.write([rowNumber, ...rowArray, errors]);
+      });
+    };
+
+    // Read and process the CSV in non-concurrent chunks
+    await new Promise((resolve, reject) => {
+      let isFirstRow = true;
+      let currentChunk = [];
+      let rowIndex = 0;
+
+      fs.createReadStream(filePath)
+        .pipe(csv.parse())
+        .on("data", (row) => {
+          // Skip header row
+          if (isFirstRow) {
+            isFirstRow = false;
+            return;
+          }
+
+          currentChunk.push(row);
+
+          if (currentChunk.length >= CHUNK_SIZE) {
+            // Process the chunk immediately
+            processChunk(currentChunk, rowIndex);
+            rowIndex += currentChunk.length;
+            currentChunk = [];
           }
         })
         .on("end", () => {
+          // Process any remaining rows
+          if (currentChunk.length > 0) {
+            processChunk(currentChunk, rowIndex);
+          }
+
+          // Finalize the streams
           if (totalInvalidEntries === 0) {
-            // Write a placeholder row if no invalid entries are found
             logCsvStream.write(["No invalid entries found", "", "", ""]);
           }
           logCsvStream.end();
@@ -353,13 +430,16 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
     // Delete temporary file
     fs.unlinkSync(filePath);
 
-    // Return the response with error counts by type
+    const processingTime = (Date.now() - startTime) / 1000;
+
+    // Return the response
     res.json({
       success: true,
       fileName: fileKey,
       columns: columns,
       totalRows: totalInvalidEntries + validRecordCount,
       validRecordCount: validRecordCount,
+      processingTimeSeconds: processingTime,
       validationErrors:
         totalInvalidEntries > 0
           ? {
