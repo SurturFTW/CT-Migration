@@ -14,7 +14,7 @@ function Footer() {
       buttonColorLight: "#fff",
       saveInCookies: false,
       label: "🌓",
-      autoMatchOsTheme: true,
+      autoMatchOsTheme: false,
     };
     const darkmode = new Darkmode(options);
     darkmode.showWidget();

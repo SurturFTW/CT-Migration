@@ -252,7 +252,7 @@ const ColumnMapping = ({
           {!showAddColumnForm ? (
             <button
               onClick={() => setShowAddColumnForm(true)}
-              className="flex items-center text-sm font-medium text-blue-600 hover:text-blue-800"
+              className="flex items-center text-sm font-medium text-black-600 hover:text-black-800"
             >
               <i className="fas fa-plus-circle mr-2"></i> Add Custom Column
             </button>

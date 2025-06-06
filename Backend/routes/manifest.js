@@ -16,7 +16,15 @@ const OUTPUT_BUCKET = process.env.S3_OUTPUT_BUCKET;
 
 router.post("/generate_manifest", async (req, res) => {
   try {
-    const { accountName, columns, type, fileName, clientEmail } = req.body;
+    const {
+      accountName,
+      columns,
+      type,
+      fileName,
+      clientEmail,
+      filePath,
+      identityColumn,
+    } = req.body;
 
     if (
       !accountName ||
@@ -32,18 +40,28 @@ router.post("/generate_manifest", async (req, res) => {
 
     const timestamp = Date.now();
 
-    // Check if the file exists in S3
+    // Extract the valid entries filename from the request
+    // This should be the path to the valid entries CSV after validation
+    const validEntriesFile = req.body.validEntriesFile;
+
+    if (!validEntriesFile) {
+      return res
+        .status(400)
+        .json({ error: "Valid entries file path is missing" });
+    }
+
+    // Check if the valid entries file exists in S3
     try {
       await s3
         .headObject({
-          Bucket: UPLOAD_BUCKET,
-          Key: fileName,
+          Bucket: OUTPUT_BUCKET,
+          Key: validEntriesFile.replace("/api/download/", ""),
         })
         .promise();
     } catch (error) {
-      return res
-        .status(400)
-        .json({ error: `Uploaded file not found in S3: ${fileName}` });
+      return res.status(400).json({
+        error: `Valid entries file not found in S3: ${validEntriesFile}`,
+      });
     }
 
     const folderName = `${accountName.replace(/[@.]/g, "_")}_${timestamp}`;
@@ -82,9 +100,9 @@ router.post("/generate_manifest", async (req, res) => {
 
     // Identify custom columns with default values
     const customColumns = columns.filter((col) => col.isCustom);
-    console.log("Custom columns:", customColumns);
+    // console.log("Custom columns:", customColumns);
 
-    // Process the CSV file with mapped columns and add custom columns
+    // Process the validated CSV file with mapped columns and add custom columns
     // Create a CSV output stream that will be sent directly to S3
     const csvOutputStream = new PassThrough();
 
@@ -107,11 +125,11 @@ router.post("/generate_manifest", async (req, res) => {
     // Pipe stringifier to the output stream that goes to S3
     stringifier.pipe(csvOutputStream);
 
-    // Get the input file from S3 and process it
+    // Get the VALID ENTRIES file from S3 and process it
     const s3InputStream = s3
       .getObject({
-        Bucket: UPLOAD_BUCKET,
-        Key: fileName,
+        Bucket: OUTPUT_BUCKET,
+        Key: validEntriesFile.replace("/api/download/", ""),
       })
       .createReadStream();
 
