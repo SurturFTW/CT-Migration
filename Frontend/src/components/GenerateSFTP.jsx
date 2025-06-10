@@ -1551,12 +1551,28 @@ function SftpGenerator() {
                             </li>
                           )}
 
+                          {validationResults.validationErrors.errorBreakdown
+                            ?.invalidDateErrors > 0 && (
+                            <li className="text-red-700">
+                              <span className="font-medium">
+                                {
+                                  validationResults.validationErrors
+                                    .errorBreakdown.invalidDateErrors
+                                }
+                              </span>{" "}
+                              fields have dates before December 15, 1901
+                              (minimum allowed date).
+                            </li>
+                          )}
+
                           {validationResults.validationErrors
                             .blankIdentityCount === 0 &&
                             !validationResults.validationErrors.errorBreakdown
                               ?.emailErrors &&
                             !validationResults.validationErrors.errorBreakdown
-                              ?.phoneErrors && (
+                              ?.phoneErrors &&
+                            !validationResults.validationErrors.errorBreakdown
+                              ?.invalidDateErrors && (
                               <li className="text-green-700">
                                 No identity or contact information issues found.
                               </li>

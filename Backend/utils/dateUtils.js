@@ -1,5 +1,4 @@
 // Datetime conversion utility function
-// Datetime conversion utility function
 const convertToEpoch = (value, columnName) => {
   if (typeof value !== "string") return value;
 
@@ -15,19 +14,16 @@ const convertToEpoch = (value, columnName) => {
     return value; // Keep $D_epoch format for non-ts columns
   }
 
-  // Special handling for simple ISO date format YYYY-MM-DD
-  const isoDateRegex = /^\s*(\d{4})-(\d{2})-(\d{2})\s*$/;
-  if (isoDateRegex.test(value)) {
-    const [, year, month, day] = isoDateRegex.exec(value);
-    // Create date with midnight UTC time
+  // Handle specific formats that standard Date parsing struggles with
+  const dmyRegex = /^(\d{1,2})-(\d{1,2})-(\d{4})$/;
+  if (dmyRegex.test(value)) {
+    const [, day, month, year] = dmyRegex.exec(value);
+    // Note: JS months are 0-indexed
     const dateObj = new Date(
-      Date.UTC(
-        parseInt(year, 10),
-        parseInt(month, 10) - 1, // JS months are 0-indexed
-        parseInt(day, 10)
-      )
+      parseInt(year, 10),
+      parseInt(month, 10) - 1,
+      parseInt(day, 10)
     );
-
     if (!isNaN(dateObj.getTime())) {
       const epochSeconds = Math.floor(dateObj.getTime() / 1000);
       if (columnName && columnName.toLowerCase() === "ts") {

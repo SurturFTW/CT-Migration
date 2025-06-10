@@ -164,7 +164,7 @@ function JsonConverter() {
 
         // Show success
         setShowResult(true);
-        showSuccessMessage("File converted successfully and stored in cloud!");
+        showSuccessMessage("File converted successfully!");
       } else {
         throw new Error(response.error || "Error converting file");
       }
