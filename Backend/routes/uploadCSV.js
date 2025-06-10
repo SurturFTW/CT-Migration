@@ -3,6 +3,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const csv = require("fast-csv");
+const XLSX = require("xlsx");
 const { PassThrough } = require("stream");
 const AWS = require("aws-sdk");
 
@@ -36,8 +37,29 @@ const storage = multer.diskStorage({
   },
 });
 
+const fileFilter = (req, file, cb) => {
+  // Accept CSV and Excel files
+  const allowedTypes = [
+    "text/csv",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ];
+
+  if (
+    allowedTypes.includes(file.mimetype) ||
+    file.originalname.endsWith(".csv") ||
+    file.originalname.endsWith(".xls") ||
+    file.originalname.endsWith(".xlsx")
+  ) {
+    cb(null, true);
+  } else {
+    cb(new Error("Only CSV and Excel files are allowed"));
+  }
+};
+
 const upload = multer({
   storage: storage,
+  fileFilter: fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 * 1024 }, // 5GB limit
 });
 
@@ -61,16 +83,65 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
       Bucket: UPLOAD_BUCKET,
       Key: fileKey,
       Body: fileStream,
-      ContentType: req.file.mimetype || "text/csv",
+      ContentType: req.file.mimetype || "application/octet-stream",
     };
 
     console.log("File uploaded to S3:", { originalName });
 
-    // Process headers and count rows via streaming
-    let columns = [];
-    let totalRows = 0;
-    const headerMap = new Map();
+    // Process the file to get headers and count rows
+    const fileInfo = await processFileHeaders(filePath, originalName);
 
+    // Delete temporary file
+    fs.unlinkSync(filePath);
+
+    res.json({
+      success: true,
+      fileName: fileKey,
+      columns: fileInfo.columns,
+      totalRows: fileInfo.totalRows,
+      hasDuplicateHeaders: fileInfo.hasDuplicateHeaders,
+    });
+  } catch (error) {
+    console.error("Error parsing file:", error);
+
+    // Clean up temp file if exists
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    res.status(500).json({ error: "Error parsing file: " + error.message });
+  }
+});
+
+// Helper function to identify file type and process it accordingly
+async function processFileHeaders(filePath, fileName) {
+  const isExcel = fileName.endsWith(".xlsx") || fileName.endsWith(".xls");
+  const columns = [];
+  let totalRows = 0;
+  const headerMap = new Map();
+
+  if (isExcel) {
+    // Process Excel file
+    const workbook = XLSX.readFile(filePath);
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+    if (data.length > 0) {
+      // Process headers (first row)
+      const headers = data[0];
+      headers.forEach((header) => {
+        if (!header) return; // Skip empty headers
+        const count = headerMap.get(header) || 0;
+        headerMap.set(header, count + 1);
+        columns.push(count > 0 ? `${header}_${count}` : header);
+      });
+
+      // Count rows (excluding header)
+      totalRows = data.length - 1;
+    }
+  } else {
+    // Process CSV (existing code)
     await new Promise((resolve, reject) => {
       fs.createReadStream(filePath)
         .pipe(
@@ -87,7 +158,7 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
           })
         )
         .on("headers", (headers) => {
-          columns = headers;
+          columns.push(...headers);
         })
         .on("data", () => {
           totalRows++;
@@ -95,31 +166,19 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
         .on("end", resolve)
         .on("error", reject);
     });
-
-    // Delete temporary file
-    fs.unlinkSync(filePath);
-
-    res.json({
-      success: true,
-      fileName: fileKey,
-      columns: columns,
-      totalRows: totalRows,
-      hasDuplicateHeaders: Array.from(headerMap.values()).some(
-        (count) => count > 1
-      ),
-    });
-  } catch (error) {
-    console.error("Error parsing CSV:", error);
-
-    // Clean up temp file if exists
-    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-
-    res.status(500).json({ error: "Error parsing CSV file: " + error.message });
   }
-});
 
+  return {
+    columns,
+    totalRows,
+    hasDuplicateHeaders: Array.from(headerMap.values()).some(
+      (count) => count > 1
+    ),
+  };
+}
+
+// Similarly update the validate_csv route to handle Excel files
+// Note: You'll need to implement an Excel version of your processing logic
 router.post("/validate_csv", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
@@ -139,6 +198,8 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
     const filePath = req.file.path;
     const originalName = req.file.originalname;
     const fileKey = originalName;
+    const isExcel =
+      originalName.endsWith(".xlsx") || originalName.endsWith(".xls");
 
     // Stream file to S3 from disk
     const fileStream = fs.createReadStream(filePath);
@@ -146,7 +207,7 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
       Bucket: UPLOAD_BUCKET,
       Key: fileKey,
       Body: fileStream,
-      ContentType: req.file.mimetype || "text/csv",
+      ContentType: req.file.mimetype || "application/octet-stream",
     };
 
     await s3.upload(uploadParams).promise();
@@ -204,32 +265,6 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
     // Pipe the CSV streams to the PassThrough streams
     logCsvStream.pipe(logStream);
     validCsvStream.pipe(validStream);
-
-    // First, read and extract headers
-    await new Promise((resolve, reject) => {
-      let headerProcessed = false;
-
-      fs.createReadStream(filePath)
-        .pipe(csv.parse())
-        .on("data", (row) => {
-          if (!headerProcessed) {
-            columns = row.map((header, index) => {
-              if (!header) return `Column_${index}`;
-              const count = headerMap.get(header) || 0;
-              headerMap.set(header, count + 1);
-              return count > 0 ? `${header}_${count}` : header;
-            });
-
-            // Write headers to output streams
-            logCsvStream.write(["Row Number", ...columns, "Error Description"]);
-            validCsvStream.write(columns);
-
-            headerProcessed = true;
-            resolve();
-          }
-        })
-        .on("error", reject);
-    });
 
     // Simple function to process a chunk of rows
     const processChunk = (rows, startIndex) => {
@@ -383,46 +418,108 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
       });
     };
 
-    // Read and process the CSV in non-concurrent chunks
-    await new Promise((resolve, reject) => {
-      let isFirstRow = true;
-      let currentChunk = [];
-      let rowIndex = 0;
+    // Process file differently based on type
+    if (isExcel) {
+      // Process Excel file
+      const workbook = XLSX.readFile(filePath);
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
-      fs.createReadStream(filePath)
-        .pipe(csv.parse())
-        .on("data", (row) => {
-          // Skip header row
-          if (isFirstRow) {
-            isFirstRow = false;
-            return;
-          }
+      if (data.length > 0) {
+        // First row contains headers
+        const headers = data[0];
+        columns = headers.map((header, index) => {
+          if (!header) return `Column_${index}`;
+          const count = headerMap.get(header) || 0;
+          headerMap.set(header, count + 1);
+          return count > 0 ? `${header}_${count}` : header;
+        });
 
-          currentChunk.push(row);
+        // Write headers to output streams
+        logCsvStream.write(["Row Number", ...columns, "Error Description"]);
+        validCsvStream.write(columns);
 
-          if (currentChunk.length >= CHUNK_SIZE) {
-            // Process the chunk immediately
-            processChunk(currentChunk, rowIndex);
-            rowIndex += currentChunk.length;
-            currentChunk = [];
-          }
-        })
-        .on("end", () => {
-          // Process any remaining rows
-          if (currentChunk.length > 0) {
-            processChunk(currentChunk, rowIndex);
-          }
+        // Process data in chunks
+        const rows = data.slice(1); // Skip header
+        for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+          const chunk = rows.slice(i, i + CHUNK_SIZE);
+          processChunk(chunk, i);
+        }
+      }
+    } else {
+      // Process CSV file - existing logic
+      // First, read and extract headers
+      await new Promise((resolve, reject) => {
+        let headerProcessed = false;
 
-          // Finalize the streams
-          if (totalInvalidEntries === 0) {
-            logCsvStream.write(["No invalid entries found", "", "", ""]);
-          }
-          logCsvStream.end();
-          validCsvStream.end();
-          resolve();
-        })
-        .on("error", reject);
-    });
+        fs.createReadStream(filePath)
+          .pipe(csv.parse())
+          .on("data", (row) => {
+            if (!headerProcessed) {
+              columns = row.map((header, index) => {
+                if (!header) return `Column_${index}`;
+                const count = headerMap.get(header) || 0;
+                headerMap.set(header, count + 1);
+                return count > 0 ? `${header}_${count}` : header;
+              });
+
+              // Write headers to output streams
+              logCsvStream.write([
+                "Row Number",
+                ...columns,
+                "Error Description",
+              ]);
+              validCsvStream.write(columns);
+
+              headerProcessed = true;
+              resolve();
+            }
+          })
+          .on("error", reject);
+      });
+
+      // Read and process the CSV in non-concurrent chunks
+      await new Promise((resolve, reject) => {
+        let isFirstRow = true;
+        let currentChunk = [];
+        let rowIndex = 0;
+
+        fs.createReadStream(filePath)
+          .pipe(csv.parse())
+          .on("data", (row) => {
+            // Skip header row
+            if (isFirstRow) {
+              isFirstRow = false;
+              return;
+            }
+
+            currentChunk.push(row);
+
+            if (currentChunk.length >= CHUNK_SIZE) {
+              // Process the chunk immediately
+              processChunk(currentChunk, rowIndex);
+              rowIndex += currentChunk.length;
+              currentChunk = [];
+            }
+          })
+          .on("end", () => {
+            // Process any remaining rows
+            if (currentChunk.length > 0) {
+              processChunk(currentChunk, rowIndex);
+            }
+            resolve();
+          })
+          .on("error", reject);
+      });
+    }
+
+    // Finalize the streams
+    if (totalInvalidEntries === 0) {
+      logCsvStream.write(["No invalid entries found", "", "", ""]);
+    }
+    logCsvStream.end();
+    validCsvStream.end();
 
     // Wait for S3 uploads to complete
     await Promise.all([logUploadPromise, validUploadPromise]);
@@ -452,16 +549,14 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
       validEntriesUrl: `/api/download/${validFileName}`,
     });
   } catch (error) {
-    console.error("Error processing CSV:", error);
+    console.error("Error processing file:", error);
 
     // Clean up temp file if exists
     if (req.file && req.file.path && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
 
-    res
-      .status(500)
-      .json({ error: "Error processing CSV file: " + error.message });
+    res.status(500).json({ error: "Error processing file: " + error.message });
   }
 });
 

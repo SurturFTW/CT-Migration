@@ -346,7 +346,7 @@ const ColumnMapping = ({
                 </button>
                 <button
                   onClick={handleAddCustomColumn}
-                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700"
+                  className="border-2 border-black text-black px-5 py-2.5 rounded-xl hover:bg-gray-100 transition flex items-center text-base disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={!newColumn.name || !newColumn.clevertap_name}
                 >
                   Add Column

@@ -356,13 +356,19 @@ function SftpGenerator() {
       dropZone.classList.remove("border-blue-400");
     };
 
+    // Update file extension check in handleDrop function
     const handleDrop = (e) => {
       e.preventDefault();
       dropZone.classList.remove("border-blue-400");
 
       if (e.dataTransfer.files.length) {
         const droppedFile = e.dataTransfer.files[0];
-        if (droppedFile.name.endsWith(".csv")) {
+        // Check for both CSV and Excel extensions
+        if (
+          droppedFile.name.endsWith(".csv") ||
+          droppedFile.name.endsWith(".xlsx") ||
+          droppedFile.name.endsWith(".xls")
+        ) {
           setFile(droppedFile);
           setSelectedFileName(droppedFile.name);
           if (fileInputRef.current) {
@@ -372,7 +378,7 @@ function SftpGenerator() {
             fileInputRef.current.files = dataTransfer.files;
           }
         } else {
-          displayError("Please select a CSV file.");
+          displayError("Please select a CSV or Excel file.");
         }
       }
     };
@@ -1021,7 +1027,7 @@ function SftpGenerator() {
                   // Local file upload
                   <>
                     <FileUploader
-                      accept=".csv,text/csv"
+                      accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                       maxSize={5}
                       onFileSelect={(selectedFile) => {
                         setFile(selectedFile);
@@ -1030,15 +1036,21 @@ function SftpGenerator() {
                         );
                       }}
                       onError={(message) => displayError(message)}
-                      supportedFormats="CSV only"
+                      supportedFormats="CSV and Excel files" // Update the formats text
                       showPreview={true}
                       disabled={loading}
                     />
 
-                    {/* Add selected file indicator */}
+                    {/* selected file indicator */}
                     {selectedFileName && (
                       <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200 flex items-center">
-                        <i className="fas fa-file-csv mr-2 text-gray-500"></i>
+                        <i
+                          className={`fas ${
+                            selectedFileName.endsWith(".csv")
+                              ? "fa-file-csv"
+                              : "fa-file-excel"
+                          } mr-2 text-gray-500`}
+                        ></i>
                         <div className="overflow-hidden">
                           <p className="text-sm font-medium text-gray-700 truncate">
                             {selectedFileName}
@@ -1063,14 +1075,13 @@ function SftpGenerator() {
                         </button>
                       </div>
                     )}
-
                     <button
                       type="button"
                       onClick={handleSubmit}
                       className="w-full mt-5 border-2 border-black text-black py-3 px-5 rounded-xl hover:bg-gray-50 transition flex items-center justify-center text-base font-medium"
                       disabled={!file || loading}
                     >
-                      <i className="fas fa-upload mr-2"></i>Process CSV
+                      <i className="fas fa-upload mr-2"></i>Process File
                     </button>
                   </>
                 ) : (
