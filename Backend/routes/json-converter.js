@@ -6,6 +6,7 @@ const { Transform } = require("stream");
 const { createObjectCsvWriter } = require("csv-writer");
 const readline = require("readline");
 const AWS = require("aws-sdk");
+const zlib = require("zlib"); // Add this for gz decompression
 
 const router = express.Router();
 
@@ -106,6 +107,34 @@ router.get("/progress", (req, res) => {
   });
 });
 
+// Helper function to decompress .gz file if needed
+const decompressIfNeeded = async (filePath) => {
+  if (filePath.endsWith(".gz")) {
+    const outputPath = filePath.replace(".gz", "");
+    return new Promise((resolve, reject) => {
+      const gzStream = fs.createReadStream(filePath);
+      const writeStream = fs.createWriteStream(outputPath);
+
+      gzStream
+        .pipe(zlib.createGunzip())
+        .pipe(writeStream)
+        .on("finish", () => {
+          // Remove the original .gz file
+          fs.unlink(filePath, (err) => {
+            if (err) console.error("Error removing original .gz file:", err);
+          });
+          resolve(outputPath);
+        })
+        .on("error", (err) => {
+          reject(new Error(`Failed to decompress file: ${err.message}`));
+        });
+    });
+  }
+
+  // If not a .gz file, return the original path
+  return filePath;
+};
+
 // Endpoint to handle file upload and conversion
 router.post("/convert", upload.single("jsonFile"), async (req, res) => {
   if (!req.file) {
@@ -119,15 +148,52 @@ router.post("/convert", upload.single("jsonFile"), async (req, res) => {
   });
 
   try {
-    const jsonFilePath = req.file.path;
+    let jsonFilePath = req.file.path;
     const timestamp = Date.now();
-    const csvFilename = `converted_${timestamp}.csv`;
+
+    // Get the original filename from the request body or use the uploaded filename as fallback
+    const originalFilename =
+      req.body.originalFilename || path.basename(req.file.originalname);
+
+    // Extract the basename without extension and handle multiple extensions (.json.gz)
+    let baseName = originalFilename;
+    if (baseName.endsWith(".json.gz")) {
+      baseName = baseName.slice(0, -8);
+    } else if (baseName.endsWith(".json") || baseName.endsWith(".gz")) {
+      baseName = baseName.slice(0, -5);
+    }
+
+    // Create CSV filename with original name but unique timestamp to prevent overwriting
+    const csvFilename = `${baseName}_${timestamp}.csv`;
     const csvFilePath = path.join(OUTPUT_FOLDER, csvFilename);
+
+    // Check if the file is gzipped and decompress if needed
+    if (
+      jsonFilePath.endsWith(".gz") ||
+      req.file.mimetype === "application/gzip"
+    ) {
+      progressMap.set(clientId, {
+        progress: 5,
+        status: "Decompressing gzipped file...",
+      });
+
+      try {
+        jsonFilePath = await decompressIfNeeded(jsonFilePath);
+      } catch (error) {
+        throw new Error(`Failed to decompress file: ${error.message}`);
+      }
+
+      progressMap.set(clientId, {
+        progress: 10,
+        status: "File decompressed, starting conversion",
+      });
+    }
+
     const jsonKey = `json_uploads/${path.basename(jsonFilePath)}`;
 
     // Upload the original JSON file to S3
     progressMap.set(clientId, {
-      progress: 5,
+      progress: 15,
       status: "Uploading JSON file to cloud storage...",
     });
 
@@ -173,6 +239,7 @@ router.post("/convert", upload.single("jsonFile"), async (req, res) => {
       status: "Conversion complete! Files stored in cloud.",
     });
 
+    // Return success response with download information
     res.json({
       success: true,
       downloadUrl: `/download/converted_files/${csvFilename}`,

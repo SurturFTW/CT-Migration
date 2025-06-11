@@ -83,10 +83,35 @@ function JsonConverter() {
   }, []);
 
   // Handle file selection from the FileUploader component
-  const handleFileSelect = useCallback((selectedFile) => {
-    setFile(selectedFile);
-    setConvertDisabled(!selectedFile);
-  }, []);
+  const handleFileSelect = useCallback(
+    (selectedFile) => {
+      if (selectedFile && !isValidFileExtension(selectedFile.name)) {
+        showError(
+          "Invalid file type. Please select a JSON or gzipped JSON file (.json or .json.gz)"
+        );
+        return;
+      }
+      setFile(selectedFile);
+      setConvertDisabled(!selectedFile);
+    },
+    [showError]
+  );
+
+  // function to validate file extensions
+  const isValidFileExtension = (filename) => {
+    const validExtensions = [".json", ".json.gz", ".gz"];
+    const ext = filename.toLowerCase().substring(filename.lastIndexOf("."));
+    if (ext === ".gz") {
+      // Check if it's specifically .json.gz
+      if (filename.toLowerCase().endsWith(".json.gz")) {
+        return true;
+      }
+      // For .gz files, we should check if they contain JSON data
+      // For simplicity, we're accepting all .gz files but this could be improved
+      return true;
+    }
+    return ext === ".json";
+  };
 
   // Handle JSON file conversion
   const handleJsonConversion = async () => {
@@ -114,6 +139,7 @@ function JsonConverter() {
       // Create form data for file upload
       const formData = new FormData();
       formData.append("jsonFile", file);
+      formData.append("originalFilename", file.name); // Add the original filename
 
       // Set initial progress for better UX
       setStatus("Uploading file...");
@@ -241,11 +267,11 @@ function JsonConverter() {
             <div className="space-y-6">
               {/* File uploader */}
               <FileUploader
-                accept=".json,application/json"
+                accept=".json,application/json,.gz,.json.gz"
                 maxSize={5}
                 onFileSelect={handleFileSelect}
                 onError={showError}
-                supportedFormats="JSON only"
+                supportedFormats="JSON and GZipped JSON (.json, .json.gz)"
                 disabled={showProgress}
               />
 
