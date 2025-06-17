@@ -6,7 +6,7 @@ const { Transform } = require("stream");
 const { createObjectCsvWriter } = require("csv-writer");
 const readline = require("readline");
 const AWS = require("aws-sdk");
-const zlib = require("zlib"); // Add this for gz decompression
+const zlib = require("zlib");
 
 const router = express.Router();
 
