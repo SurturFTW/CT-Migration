@@ -33,6 +33,51 @@ const convertToEpoch = (value, columnName) => {
     }
   }
 
+  // Handle MM-DD-YYYY HH:mm:ss or MM/DD/YYYY HH:mm:ss
+  const mdYTimeRegex =
+    /^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})$/;
+  if (mdYTimeRegex.test(value)) {
+    const [, month, day, year, hour, minute, second] = mdYTimeRegex.exec(value);
+    const dateObj = new Date(
+      parseInt(year, 10),
+      parseInt(month, 10) - 1,
+      parseInt(day, 10),
+      parseInt(hour, 10),
+      parseInt(minute, 10),
+      parseInt(second, 10),
+      0
+    );
+    if (!isNaN(dateObj.getTime())) {
+      const epochSeconds = Math.floor(dateObj.getTime() / 1000);
+      if (columnName && columnName.toLowerCase() === "ts") {
+        return epochSeconds;
+      }
+      return `$D_${epochSeconds}`;
+    }
+  }
+
+  // Handle MM-DD-YYYY HH:mm or MM/DD/YYYY HH:mm (no seconds)
+  const mdYTimeNoSecRegex =
+    /^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})\s+(\d{1,2}):(\d{2})$/;
+  if (mdYTimeNoSecRegex.test(value)) {
+    const [, month, day, year, hour, minute] = mdYTimeNoSecRegex.exec(value);
+    const dateObj = new Date(
+      parseInt(year, 10),
+      parseInt(month, 10) - 1,
+      parseInt(day, 10),
+      parseInt(hour, 10),
+      parseInt(minute, 10),
+      0 // seconds default to 0
+    );
+    if (!isNaN(dateObj.getTime())) {
+      const epochSeconds = Math.floor(dateObj.getTime() / 1000);
+      if (columnName && columnName.toLowerCase() === "ts") {
+        return epochSeconds;
+      }
+      return `$D_${epochSeconds}`;
+    }
+  }
+
   // Handle formats with ordinals like "3rd"
   const ordinalDateRegex =
     /^(\w{3})\s+(\d{1,2})(?:st|nd|rd|th)?\s+(\w{3,9})\s+(\d{4})\s+(\d{1,2}):(\d{2})(?:\s*(am|pm))?$/i;
