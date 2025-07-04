@@ -205,16 +205,63 @@ export const previewEvents = async (formData) => {
   }
 };
 
-export const uploadEvents = async (formData) => {
+// In your api.js service file
+export const uploadEventsWithProgress = async (formData, onProgress) => {
+  const controller = new AbortController();
+  const { signal } = controller;
+
+  const response = await fetch("/api/upload_event", {
+    method: "POST",
+    body: formData,
+    signal,
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to upload events");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let result = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    // Accumulate the data
+    const chunk = decoder.decode(value, { stream: true });
+    result += chunk;
+
+    // Try to parse progress updates
+    try {
+      if (chunk.includes("progress:")) {
+        const progressMatch = chunk.match(/progress:\s*(\d+)/);
+        if (progressMatch && progressMatch[1]) {
+          const progress = parseInt(progressMatch[1], 10);
+          onProgress(null, progress);
+        }
+      }
+
+      // Look for log messages
+      const logMatches = chunk.match(/📦|🚀|✅|❌|⚠️|📊|⏱️/g);
+      if (logMatches) {
+        onProgress(chunk.trim(), null);
+      }
+    } catch (e) {
+      console.warn("Error parsing progress:", e);
+    }
+  }
+
+  // Parse the final result
   try {
-    const response = await api.post("/upload_event", formData, {
-      headers: {
-        "Content-Type": "multipart/form-data",
-      },
-    });
-    return response.data;
-  } catch (error) {
-    throw error.response?.data || error;
+    return JSON.parse(result);
+  } catch (e) {
+    console.error("Error parsing result:", e);
+    throw new Error("Invalid response from server");
   }
 };
 
