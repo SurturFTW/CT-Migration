@@ -83,7 +83,7 @@ router.post("/generate_manifest", async (req, res) => {
     };
 
     // Use the same naming convention for manifest file
-    const manifestFileName = `${accountName}_${timestamp}.json`;
+    const manifestFileName = `${accountName}_${timestamp}.manifest`;
 
     // Upload manifest directly to S3 without creating temp file
     await s3
