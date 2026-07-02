@@ -11,7 +11,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.872.0",
     "archiver": "^7.0.1",
     "aws-sdk": "^2.1692.0",
     "axios": "^1.8.2",
@@ -29,7 +28,6 @@
     "moment": "^2.30.1",
     "moment-timezone": "^0.5.47",
     "multer": "^2.0.1",
-    "multer-s3": "^3.0.1",
     "papaparse": "^5.5.2",
     "path": "^0.12.7",
     "requests": "^0.3.0",

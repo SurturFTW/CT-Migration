@@ -114,15 +114,8 @@ router.post("/fetch-from-s3", async (req, res) => {
       region: region,
     });
 
-    // S3 client for source bucket
+    // S3 client for the user's source bucket
     const sourceS3 = new AWS.S3();
-
-    // S3 client for our app bucket (using environment credentials)
-    const appS3 = new AWS.S3({
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      region: process.env.AWS_REGION || "us-east-1",
-    });
 
     const sourceParams = {
       Bucket: bucket,
@@ -132,7 +125,7 @@ router.post("/fetch-from-s3", async (req, res) => {
     // Extract filename from path
     const filename = filePath.split("/").pop();
 
-    // Generate a unique key for our upload bucket
+    // Generate a unique name to hand back to the client
     const timestamp = new Date().getTime();
     const destinationKey = `${filename}_${timestamp}.csv`;
 
@@ -168,32 +161,21 @@ router.post("/fetch-from-s3", async (req, res) => {
             // Get the collected content
             csvContent = await streamToString(contentCollector);
 
-            // Upload to our app's S3 bucket
-            const uploadParams = {
-              Bucket: process.env.S3_UPLOAD_BUCKET,
-              Key: destinationKey,
-              Body: csvContent,
-              ContentType: "text/csv",
-            };
-
-            await appS3.upload(uploadParams).promise();
-
             // Return success response
             res.json({
               success: true,
-              message: "File successfully fetched and stored in S3",
+              message: "File successfully fetched from S3",
               filename: destinationKey,
-              s3Key: destinationKey, // Key in our app's bucket
               headers: headers,
               rowCount: rowCount,
               csvContent: csvContent,
               sampleRows: sampleRows,
             });
           } catch (err) {
-            console.error("Error uploading to app S3 bucket:", err);
+            console.error("Error reading fetched S3 content:", err);
             res.status(500).json({
               success: false,
-              error: `Error uploading to app S3: ${err.message}`,
+              error: `Error reading fetched S3 content: ${err.message}`,
             });
           }
         });

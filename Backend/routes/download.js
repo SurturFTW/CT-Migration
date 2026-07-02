@@ -1,90 +1,47 @@
 const express = require("express");
-const AWS = require("aws-sdk");
-const { PassThrough } = require("stream");
+const fs = require("fs");
+const path = require("path");
+const { OUTPUT_FOLDER } = require("../utils/storage");
 
 const router = express.Router();
 
-// Initialize S3
-const s3 = new AWS.S3();
-const OUTPUT_BUCKET = process.env.S3_OUTPUT_BUCKET;
+// Resolve a request-supplied path against OUTPUT_FOLDER, rejecting any
+// attempt to escape it (e.g. via ".." or an encoded path separator).
+function resolveSafePath(...segments) {
+  const resolved = path.resolve(
+    OUTPUT_FOLDER,
+    ...segments.map((segment) => path.basename(segment))
+  );
 
-router.get("/download/:filename", async (req, res) => {
-  try {
-    const fileKey = req.params.filename;
-
-    const params = {
-      Bucket: OUTPUT_BUCKET,
-      Key: fileKey,
-    };
-
-    // Check if the file exists in S3
-    try {
-      await s3.headObject(params).promise();
-    } catch (error) {
-      if (error.code === "NotFound") {
-        return res.status(404).json({ error: "File not found" });
-      }
-      throw error; // Re-throw other errors
-    }
-
-    // Get the file from S3
-    const s3Object = await s3.getObject(params).promise();
-
-    // Set the appropriate headers
-    res.setHeader("Content-Length", s3Object.ContentLength);
-    res.setHeader(
-      "Content-Type",
-      s3Object.ContentType || "application/octet-stream"
-    );
-    res.setHeader("Content-Disposition", `attachment; filename="${fileKey}"`);
-
-    // Send the file to the client
-    res.send(s3Object.Body);
-  } catch (error) {
-    console.error("Error downloading file:", error);
-    res.status(500).json({ error: "Error downloading file" });
+  if (resolved !== OUTPUT_FOLDER && !resolved.startsWith(OUTPUT_FOLDER + path.sep)) {
+    return null;
   }
+
+  return resolved;
+}
+
+function sendFile(res, filePath, downloadName) {
+  if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    return res.status(404).json({ error: "File not found" });
+  }
+
+  res.download(filePath, downloadName, (err) => {
+    if (err && !res.headersSent) {
+      console.error("Error downloading file:", err);
+      res.status(500).json({ error: "Error downloading file" });
+    }
+  });
+}
+
+router.get("/download/:filename", (req, res) => {
+  const filePath = resolveSafePath(req.params.filename);
+  sendFile(res, filePath, req.params.filename);
 });
 
-// Support for downloading from nested folder paths in S3
-router.get("/download/:folder/:filename", async (req, res) => {
-  try {
-    const folderName = req.params.folder;
-    const fileName = req.params.filename;
-    const fileKey = `${folderName}/${fileName}`;
-
-    const params = {
-      Bucket: OUTPUT_BUCKET,
-      Key: fileKey,
-    };
-
-    // Check if the file exists in S3
-    try {
-      await s3.headObject(params).promise();
-    } catch (error) {
-      if (error.code === "NotFound") {
-        return res.status(404).json({ error: "File not found" });
-      }
-      throw error; // Re-throw other errors
-    }
-
-    // Get the file from S3
-    const s3Object = await s3.getObject(params).promise();
-
-    // Set the appropriate headers
-    res.setHeader("Content-Length", s3Object.ContentLength);
-    res.setHeader(
-      "Content-Type",
-      s3Object.ContentType || "application/octet-stream"
-    );
-    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-
-    // Send the file to the client
-    res.send(s3Object.Body);
-  } catch (error) {
-    console.error("Error downloading file:", error);
-    res.status(500).json({ error: "Error downloading file" });
-  }
+// Support for downloading from nested folder paths (e.g. manifest bundles)
+router.get("/download/:folder/:filename", (req, res) => {
+  const filePath = resolveSafePath(req.params.folder, req.params.filename);
+  sendFile(res, filePath, req.params.filename);
 });
 
 module.exports = router;

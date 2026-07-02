@@ -1,18 +1,15 @@
 const express = require("express");
 const path = require("path");
+const fs = require("fs");
 const { parse, stringify } = require("csv");
-const AWS = require("aws-sdk");
-const { PassThrough } = require("stream");
 const archiver = require("archiver");
 
 const { convertToEpoch } = require("../utils/dateUtils");
+const { OUTPUT_FOLDER, ensureDir } = require("../utils/storage");
 
 const router = express.Router();
 
-// Initialize S3
-const s3 = new AWS.S3();
-const UPLOAD_BUCKET = process.env.S3_UPLOAD_BUCKET;
-const OUTPUT_BUCKET = process.env.S3_OUTPUT_BUCKET;
+ensureDir(OUTPUT_FOLDER);
 
 router.post("/generate_manifest", async (req, res) => {
   try {
@@ -50,17 +47,15 @@ router.post("/generate_manifest", async (req, res) => {
         .json({ error: "Valid entries file path is missing" });
     }
 
-    // Check if the valid entries file exists in S3
-    try {
-      await s3
-        .headObject({
-          Bucket: OUTPUT_BUCKET,
-          Key: validEntriesFile.replace("/api/download/", ""),
-        })
-        .promise();
-    } catch (error) {
+    // Check if the valid entries file exists locally
+    const validEntriesPath = path.join(
+      OUTPUT_FOLDER,
+      path.basename(validEntriesFile.replace("/api/download/", ""))
+    );
+
+    if (!fs.existsSync(validEntriesPath)) {
       return res.status(400).json({
-        error: `Valid entries file not found in S3: ${validEntriesFile}`,
+        error: `Valid entries file not found: ${validEntriesFile}`,
       });
     }
 
@@ -85,36 +80,29 @@ router.post("/generate_manifest", async (req, res) => {
     // Use the same naming convention for manifest file
     const manifestFileName = `${accountName}_${timestamp}.manifest`;
 
-    // Upload manifest directly to S3 without creating temp file
-    await s3
-      .upload({
-        Bucket: OUTPUT_BUCKET,
-        Key: `${folderName}/${manifestFileName}`,
-        Body: JSON.stringify(manifest, null, 4),
-        ContentType: "application/json",
-      })
-      .promise();
+    const bundleDir = path.join(OUTPUT_FOLDER, folderName);
+    ensureDir(bundleDir);
+
+    // Write the manifest file directly to disk
+    fs.writeFileSync(
+      path.join(bundleDir, manifestFileName),
+      JSON.stringify(manifest, null, 4)
+    );
 
     // Create a Set of columns to keep
     const columnsToKeep = new Set(columns.map((col) => col.csv_name));
 
     // Identify custom columns with default values
     const customColumns = columns.filter((col) => col.isCustom);
-    // console.log("Custom columns:", customColumns);
 
     // Process the validated CSV file with mapped columns and add custom columns
-    // Create a CSV output stream that will be sent directly to S3
-    const csvOutputStream = new PassThrough();
+    const csvOutputPath = path.join(bundleDir, `${csvFilePrefix}.csv`);
+    const csvOutputStream = fs.createWriteStream(csvOutputPath);
 
-    // Set up the S3 upload for the CSV
-    const csvUploadPromise = s3
-      .upload({
-        Bucket: OUTPUT_BUCKET,
-        Key: `${folderName}/${csvFilePrefix}.csv`,
-        Body: csvOutputStream,
-        ContentType: "text/csv",
-      })
-      .promise();
+    const csvWritePromise = new Promise((resolve, reject) => {
+      csvOutputStream.on("finish", resolve);
+      csvOutputStream.on("error", reject);
+    });
 
     // Create CSV stringifier for the output
     const stringifier = stringify({
@@ -122,22 +110,17 @@ router.post("/generate_manifest", async (req, res) => {
       columns: Array.from(columnsToKeep), // Include all mapped columns including custom ones
     });
 
-    // Pipe stringifier to the output stream that goes to S3
+    // Pipe stringifier to the local output file
     stringifier.pipe(csvOutputStream);
 
-    // Get the VALID ENTRIES file from S3 and process it
-    const s3InputStream = s3
-      .getObject({
-        Bucket: OUTPUT_BUCKET,
-        Key: validEntriesFile.replace("/api/download/", ""),
-      })
-      .createReadStream();
+    // Read the VALID ENTRIES file from disk and process it
+    const validEntriesReadStream = fs.createReadStream(validEntriesPath);
 
     // Parse the input CSV
     const parser = parse({ columns: true, cast: false });
 
     // Set up the streaming pipeline and processing
-    s3InputStream
+    validEntriesReadStream
       .pipe(parser)
       .on("data", (row) => {
         // Convert datetime values in each row
@@ -192,53 +175,37 @@ router.post("/generate_manifest", async (req, res) => {
         csvOutputStream.end();
       });
 
-    // Wait for CSV upload to complete
-    await csvUploadPromise;
+    // Wait for the CSV file to finish writing
+    await csvWritePromise;
 
-    // Now create and upload the ZIP file directly to S3
-    const zipOutputStream = new PassThrough();
+    // Now build the ZIP bundle from the local manifest + CSV files
+    const zipPath = path.join(OUTPUT_FOLDER, `${folderName}.zip`);
+    const zipOutputStream = fs.createWriteStream(zipPath);
 
-    // Set up the S3 upload for the ZIP
-    const zipUploadPromise = s3
-      .upload({
-        Bucket: OUTPUT_BUCKET,
-        Key: `${folderName}.zip`,
-        Body: zipOutputStream,
-        ContentType: "application/zip",
-      })
-      .promise();
+    const zipWritePromise = new Promise((resolve, reject) => {
+      zipOutputStream.on("close", resolve);
+      zipOutputStream.on("error", reject);
+    });
 
     // Create the archiver
     const archive = archiver("zip", { zlib: { level: 9 } });
     archive.pipe(zipOutputStream);
 
-    // Add the manifest file to the archive
-    const manifestBuffer = Buffer.from(JSON.stringify(manifest, null, 4));
-    archive.append(manifestBuffer, {
+    // Add the manifest and CSV files (already on disk) to the archive
+    archive.file(path.join(bundleDir, manifestFileName), {
       name: `${folderName}/${manifestFileName}`,
     });
-
-    // Get the CSV file we just uploaded and add it to the archive
-    const csvResponse = await s3
-      .getObject({
-        Bucket: OUTPUT_BUCKET,
-        Key: `${folderName}/${csvFilePrefix}.csv`,
-      })
-      .promise();
-
-    archive.append(csvResponse.Body, {
+    archive.file(csvOutputPath, {
       name: `${folderName}/${csvFilePrefix}.csv`,
     });
 
     // Finalize the archive
     archive.finalize();
 
-    // Wait for the ZIP upload to complete
-    await zipUploadPromise;
+    // Wait for the ZIP file to finish writing
+    await zipWritePromise;
 
-    console.log(
-      `Manifest, CSV, and ZIP files created and uploaded successfully`
-    );
+    console.log(`Manifest, CSV, and ZIP files created successfully`);
 
     // Respond with the URLs
     res.json({

@@ -4,8 +4,6 @@ const path = require("path");
 const fs = require("fs");
 const csv = require("fast-csv");
 const XLSX = require("xlsx");
-const { PassThrough } = require("stream");
-const AWS = require("aws-sdk");
 
 const {
   validateEmail,
@@ -14,13 +12,11 @@ const {
 } = require("../utils/validationUtils");
 
 const { convertToEpoch } = require("../utils/dateUtils");
+const { OUTPUT_FOLDER, ensureDir } = require("../utils/storage");
 
 const router = express.Router();
 
-// Initialize S3
-const s3 = new AWS.S3();
-const UPLOAD_BUCKET = process.env.S3_UPLOAD_BUCKET;
-const OUTPUT_BUCKET = process.env.S3_OUTPUT_BUCKET;
+ensureDir(OUTPUT_FOLDER);
 
 // Configure multer to use disk storage for large files
 const storage = multer.diskStorage({
@@ -76,17 +72,6 @@ router.post("/upload_csv", upload.single("file"), async (req, res) => {
     const filePath = req.file.path;
     const originalName = req.file.originalname;
     const fileKey = originalName;
-
-    // Stream file to S3 from disk
-    const fileStream = fs.createReadStream(filePath);
-    const uploadParams = {
-      Bucket: UPLOAD_BUCKET,
-      Key: fileKey,
-      Body: fileStream,
-      ContentType: req.file.mimetype || "application/octet-stream",
-    };
-
-    console.log("File uploaded to S3:", { originalName });
 
     // Process the file to get headers and count rows
     const fileInfo = await processFileHeaders(filePath, originalName);
@@ -201,17 +186,6 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
     const isExcel =
       originalName.endsWith(".xlsx") || originalName.endsWith(".xls");
 
-    // Stream file to S3 from disk
-    const fileStream = fs.createReadStream(filePath);
-    const uploadParams = {
-      Bucket: UPLOAD_BUCKET,
-      Key: fileKey,
-      Body: fileStream,
-      ContentType: req.file.mimetype || "application/octet-stream",
-    };
-
-    await s3.upload(uploadParams).promise();
-
     // Generate output filenames
     const logFileName = `validation_log_${Date.now()}_${originalName}`;
     const validFileName = `valid_entries_${Date.now()}_${originalName}`;
@@ -235,34 +209,29 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
       blankIdentities: 0,
     };
 
-    // Create PassThrough streams for S3 uploads
-    const logStream = new PassThrough();
-    const validStream = new PassThrough();
+    // Create local write streams for the output files
+    const logStream = fs.createWriteStream(
+      path.join(OUTPUT_FOLDER, logFileName)
+    );
+    const validStream = fs.createWriteStream(
+      path.join(OUTPUT_FOLDER, validFileName)
+    );
 
-    // Set up S3 uploads
-    const logUploadPromise = s3
-      .upload({
-        Bucket: OUTPUT_BUCKET,
-        Key: logFileName,
-        Body: logStream,
-        ContentType: "text/csv",
-      })
-      .promise();
+    const logWritePromise = new Promise((resolve, reject) => {
+      logStream.on("finish", resolve);
+      logStream.on("error", reject);
+    });
 
-    const validUploadPromise = s3
-      .upload({
-        Bucket: OUTPUT_BUCKET,
-        Key: validFileName,
-        Body: validStream,
-        ContentType: "text/csv",
-      })
-      .promise();
+    const validWritePromise = new Promise((resolve, reject) => {
+      validStream.on("finish", resolve);
+      validStream.on("error", reject);
+    });
 
     // Create CSV streams for formatting
     const logCsvStream = csv.format({ headers: true });
     const validCsvStream = csv.format({ headers: true });
 
-    // Pipe the CSV streams to the PassThrough streams
+    // Pipe the CSV streams to the local output files
     logCsvStream.pipe(logStream);
     validCsvStream.pipe(validStream);
 
@@ -521,8 +490,8 @@ router.post("/validate_csv", upload.single("file"), async (req, res) => {
     logCsvStream.end();
     validCsvStream.end();
 
-    // Wait for S3 uploads to complete
-    await Promise.all([logUploadPromise, validUploadPromise]);
+    // Wait for the output files to finish writing to disk
+    await Promise.all([logWritePromise, validWritePromise]);
 
     // Delete temporary file
     fs.unlinkSync(filePath);

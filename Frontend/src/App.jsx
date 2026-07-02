@@ -9,18 +9,21 @@ import JsonConverter from "./components/JsonConverter";
 import ChargedEventUpload from "./components/ChargedEventUpload";
 
 function App() {
-  return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<Login />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/sftp-generator" element={<SftpGenerator />} />
-        <Route path="/json-converter" element={<JsonConverter />} />
-        <Route path="/ChargedEventUpload" element={<ChargedEventUpload />} />
-      </Routes>
-    </Router>
-  );
+    return (
+        <Router>
+            <Routes>
+                <Route path="/" element={<Login />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/sftp-generator" element={<SftpGenerator />} />
+                <Route path="/json-converter" element={<JsonConverter />} />
+                <Route
+                    path="/ChargedEventUpload"
+                    element={<ChargedEventUpload />}
+                />
+            </Routes>
+        </Router>
+    );
 }
 
 export default App;

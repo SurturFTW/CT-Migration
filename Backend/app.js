@@ -1,29 +1,12 @@
 const express = require("express");
-const multer = require("multer");
-const fs = require("fs");
-const path = require("path");
 const dotenv = require("dotenv");
 const cors = require("cors");
-const AWS = require("aws-sdk");
-const multerS3 = require("multer-s3");
+const { startCleanupSweep } = require("./utils/cleanup");
 
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
-
-// Configure AWS
-AWS.config.update({
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION || "us-east-1",
-});
-
-const s3 = new AWS.S3();
-
-// S3 bucket configuration - these will be read from environment variables
-const UPLOAD_BUCKET = process.env.S3_UPLOAD_BUCKET;
-const OUTPUT_BUCKET = process.env.S3_OUTPUT_BUCKET;
 
 app.use(
   cors({
@@ -33,25 +16,6 @@ app.use(
   })
 );
 app.use(express.json());
-
-// Set up direct S3 storage for uploads - streaming directly to S3
-const s3Storage = multerS3({
-  s3: s3,
-  bucket: UPLOAD_BUCKET,
-  metadata: function (req, file, cb) {
-    cb(null, { fieldName: file.fieldname });
-  },
-  key: function (req, file, cb) {
-    // Use original filename, or generate unique name if needed
-    cb(null, file.originalname);
-  },
-  contentType: multerS3.AUTO_CONTENT_TYPE, // Automatically detect content type
-});
-
-// Configure multer with S3 storage
-const upload = multer({ storage: s3Storage });
-
-// app.use("/downloads", express.static(OUTPUT_FOLDER));
 
 // Default route for the root URL
 app.get("/", (req, res) => {
@@ -84,4 +48,5 @@ app.use((req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  startCleanupSweep();
 });

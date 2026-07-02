@@ -5,27 +5,17 @@ const path = require("path");
 const { Transform } = require("stream");
 const { createObjectCsvWriter } = require("csv-writer");
 const readline = require("readline");
-const AWS = require("aws-sdk");
 const zlib = require("zlib");
+
+const { UPLOADS_FOLDER: UPLOAD_FOLDER, OUTPUT_FOLDER, ensureDir } = require("../utils/storage");
 
 const router = express.Router();
 
-// Initialize S3
-const s3 = new AWS.S3();
-const UPLOAD_BUCKET = "uploadbucket07";
-const OUTPUT_BUCKET = "downloadbucket07";
+// Converted CSVs live under output/converted_files so /api/download/converted_files/:filename can serve them
+const CONVERTED_FILES_FOLDER = path.join(OUTPUT_FOLDER, "converted_files");
 
-// Create uploads and downloads directories if they don't exist
-const UPLOAD_FOLDER = path.join(__dirname, "../uploads");
-const OUTPUT_FOLDER = path.join(__dirname, "../output");
-
-if (!fs.existsSync(UPLOAD_FOLDER)) {
-  fs.mkdirSync(UPLOAD_FOLDER, { recursive: true });
-}
-
-if (!fs.existsSync(OUTPUT_FOLDER)) {
-  fs.mkdirSync(OUTPUT_FOLDER, { recursive: true });
-}
+ensureDir(UPLOAD_FOLDER);
+ensureDir(CONVERTED_FILES_FOLDER);
 
 // Configure multer storage for temporary files
 const storage = multer.diskStorage({
@@ -45,28 +35,6 @@ const upload = multer({
 
 // Global variable to track conversion progress
 const progressMap = new Map();
-
-// Helper function to upload file to S3
-const uploadToS3 = async (filePath, key, bucket) => {
-  return new Promise((resolve, reject) => {
-    const fileStream = fs.createReadStream(filePath);
-
-    const params = {
-      Bucket: bucket,
-      Key: key,
-      Body: fileStream,
-    };
-
-    s3.upload(params, (err, data) => {
-      if (err) {
-        console.error("S3 upload error:", err);
-        reject(err);
-        return;
-      }
-      resolve(data);
-    });
-  });
-};
 
 // SSE endpoint for progress updates (unchanged)
 router.get("/progress", (req, res) => {
@@ -165,7 +133,7 @@ router.post("/convert", upload.single("jsonFile"), async (req, res) => {
 
     // Create CSV filename with original name but unique timestamp to prevent overwriting
     const csvFilename = `${baseName}_${timestamp}.csv`;
-    const csvFilePath = path.join(OUTPUT_FOLDER, csvFilename);
+    const csvFilePath = path.join(CONVERTED_FILES_FOLDER, csvFilename);
 
     // Check if the file is gzipped and decompress if needed
     if (
@@ -189,17 +157,6 @@ router.post("/convert", upload.single("jsonFile"), async (req, res) => {
       });
     }
 
-    const jsonKey = `json_uploads/${path.basename(jsonFilePath)}`;
-
-    // Upload the original JSON file to S3
-    progressMap.set(clientId, {
-      progress: 15,
-      status: "Uploading JSON file to cloud storage...",
-    });
-
-    // Upload the JSON file to uploadbucket07
-    await uploadToS3(jsonFilePath, jsonKey, UPLOAD_BUCKET);
-
     // Check JSON file format safely
     const formatInfo = await checkJsonFormat(jsonFilePath, clientId);
 
@@ -213,30 +170,14 @@ router.post("/convert", upload.single("jsonFile"), async (req, res) => {
       throw new Error("Unsupported JSON format");
     }
 
-    // Upload the converted CSV file to S3
-    progressMap.set(clientId, {
-      progress: 95,
-      status: "Uploading converted CSV to cloud storage...",
-    });
-
-    // Upload the CSV file to downloadbucket07
-    const csvKey = `converted_files/${csvFilename}`;
-    const uploadResult = await uploadToS3(csvFilePath, csvKey, OUTPUT_BUCKET);
-    // console.log("S3 Upload successful:", uploadResult);
-
-    // Clean up the temporary files
+    // Clean up the temporary JSON input file (the converted CSV stays on disk for download)
     fs.unlink(jsonFilePath, (err) => {
       if (err) console.error("Error removing temp JSON file:", err);
     });
 
-    fs.unlink(csvFilePath, (err) => {
-      if (err) console.error("Error removing temp CSV file:", err);
-    });
-
-    // Return success response with download information
     progressMap.set(clientId, {
       progress: 100,
-      status: "Conversion complete! Files stored in cloud.",
+      status: "Conversion complete!",
     });
 
     // Return success response with download information

@@ -3,14 +3,12 @@ const multer = require("multer");
 const path = require("path");
 const csv = require("fast-csv");
 const axios = require("axios");
-const AWS = require("aws-sdk");
 const fs = require("fs");
 const os = require("os");
+const { OUTPUT_FOLDER, ensureDir } = require("../utils/storage");
 const router = express.Router();
 
-// Initialize S3
-const s3 = new AWS.S3();
-const UPLOAD_BUCKET = process.env.S3_UPLOAD_BUCKET;
+ensureDir(OUTPUT_FOLDER);
 
 // Configure multer for large files - using disk storage for very large files
 const storage = multer.diskStorage({
@@ -362,13 +360,10 @@ router.post("/upload_event", upload.single("file"), async (req, res) => {
       failedBatchesLogPath
     );
 
-    // Upload failed batches log to S3 if there were failures
+    // Move the failed batches log into the output folder if there were failures
     let failedBatchesLogUrl = null;
     if (uploadResults.failedBatches > 0) {
-      failedBatchesLogUrl = await uploadFailedBatchesLogToS3(
-        failedBatchesLogPath,
-        accountId
-      );
+      failedBatchesLogUrl = saveFailedBatchesLog(failedBatchesLogPath, accountId);
     }
 
     // Calculate total time
@@ -617,36 +612,24 @@ function cleanupFiles(uploadedFilePath, failedBatchesLogPath) {
   }
 }
 
-// Helper function to upload failed batches log to S3
-async function uploadFailedBatchesLogToS3(logFilePath, accountId) {
+// Helper function to move the failed batches log into the output folder
+function saveFailedBatchesLog(logFilePath) {
   try {
     if (!fs.existsSync(logFilePath)) {
       return null;
     }
 
+    const logsDir = path.join(OUTPUT_FOLDER, "failed_batches_logs");
+    ensureDir(logsDir);
+
     const fileName = path.basename(logFilePath);
-    const s3Key = `failed_batches_logs/${fileName}`;
+    fs.renameSync(logFilePath, path.join(logsDir, fileName));
 
-    const fileStream = fs.createReadStream(logFilePath);
-    const uploadResult = await s3
-      .upload({
-        Bucket: UPLOAD_BUCKET,
-        Key: s3Key,
-        Body: fileStream,
-        ContentType: "application/json",
-        Metadata: {
-          accountId: accountId,
-          uploadTime: new Date().toISOString(),
-        },
-      })
-      .promise();
-
-    console.log(
-      `📤 Failed batches log uploaded to S3: ${uploadResult.Location}`
-    );
-    return uploadResult.Location;
+    const downloadUrl = `/api/download/failed_batches_logs/${fileName}`;
+    console.log(`📝 Failed batches log saved to: ${downloadUrl}`);
+    return downloadUrl;
   } catch (error) {
-    console.error("❌ Failed to upload failed batches log to S3:", error);
+    console.error("❌ Failed to save failed batches log:", error);
     return null;
   }
 }
